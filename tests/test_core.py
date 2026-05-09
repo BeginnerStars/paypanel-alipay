@@ -110,6 +110,80 @@ class DomainSettingsTests(unittest.TestCase):
             get_settings.cache_clear()
 
 
+class SecretStorageTests(unittest.TestCase):
+    def test_account_secrets_are_encrypted_and_migrated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["APP_DATABASE_PATH"] = str(Path(tmp) / "paypanel.db")
+            os.environ["APP_SECRET_KEY"] = "storage-secret"
+            from app.config import get_settings
+            from app.crypto import decrypt_secret, encrypt_secret
+            from app.db import connect, execute, init_db, one
+
+            get_settings.cache_clear()
+            init_db()
+            encrypted = encrypt_secret("plain-key")
+            self.assertNotEqual(encrypted, "plain-key")
+            self.assertTrue(encrypted.startswith("enc:v1:"))
+            self.assertEqual(decrypt_secret(encrypted), "plain-key")
+
+            execute(
+                """
+                INSERT INTO accounts(name, app_id, merchant_private_key, alipay_public_key)
+                VALUES(?, ?, ?, ?)
+                """,
+                ("legacy", "app", "legacy-private", "legacy-public"),
+            )
+            init_db()
+            row = one("SELECT merchant_private_key, alipay_public_key FROM accounts WHERE name = ?", ("legacy",))
+            self.assertTrue(row["merchant_private_key"].startswith("enc:v1:"))
+            self.assertTrue(row["alipay_public_key"].startswith("enc:v1:"))
+            self.assertEqual(decrypt_secret(row["merchant_private_key"]), "legacy-private")
+            self.assertEqual(decrypt_secret(row["alipay_public_key"]), "legacy-public")
+
+            for key in ("APP_DATABASE_PATH", "APP_SECRET_KEY"):
+                os.environ.pop(key, None)
+            get_settings.cache_clear()
+
+
+class OrderCleanupTests(unittest.TestCase):
+    def test_cleanup_orders_by_time_range_and_all(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["APP_DATABASE_PATH"] = str(Path(tmp) / "paypanel.db")
+            os.environ["APP_SECRET_KEY"] = "cleanup-secret"
+            from app.config import get_settings
+            from app.db import all_rows, execute, init_db
+            from app.main import Handler
+
+            get_settings.cache_clear()
+            init_db()
+            execute(
+                "INSERT INTO orders(out_trade_no, amount, subject, pay_type, status, created_at) VALUES(?, ?, ?, ?, ?, ?)",
+                ("OLD", "1.00", "old", "precreate", "TRADE_CLOSED", "2026-01-01 00:00:00"),
+            )
+            execute(
+                "INSERT INTO orders(out_trade_no, amount, subject, pay_type, status, created_at) VALUES(?, ?, ?, ?, ?, ?)",
+                ("NEW", "1.00", "new", "precreate", "WAIT_BUYER_PAY", "2026-02-01 00:00:00"),
+            )
+
+            class Dummy:
+                form = lambda self: {"cleanup_mode": "range", "cleanup_start": "2026-01-01T00:00", "cleanup_end": "2026-01-31T23:59"}
+                redirect = lambda self, location: location
+
+            self.assertEqual(Handler.cleanup_orders(Dummy()), "/orders")
+            self.assertEqual([row["out_trade_no"] for row in all_rows("SELECT out_trade_no FROM orders")], ["NEW"])
+
+            class DummyAll:
+                form = lambda self: {"cleanup_mode": "all"}
+                redirect = lambda self, location: location
+
+            self.assertEqual(Handler.cleanup_orders(DummyAll()), "/orders")
+            self.assertEqual(all_rows("SELECT out_trade_no FROM orders"), [])
+
+            for key in ("APP_DATABASE_PATH", "APP_SECRET_KEY"):
+                os.environ.pop(key, None)
+            get_settings.cache_clear()
+
+
 class AlipayCryptoTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("openssl"), "openssl is required for RSA2 smoke test")
     def test_sign_and_verify_round_trip(self) -> None:

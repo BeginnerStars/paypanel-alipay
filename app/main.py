@@ -26,6 +26,7 @@ from .auth import (
     verify_credentials,
 )
 from .config import get_settings
+from .crypto import decrypt_secret, encrypt_secret
 from .db import all_rows, connect, execute, init_db, one, settings_map
 
 
@@ -97,8 +98,8 @@ def row_to_account(row: Any) -> AlipayAccount:
         id=row["id"],
         app_id=row["app_id"],
         gateway=row["gateway"],
-        merchant_private_key=row["merchant_private_key"],
-        alipay_public_key=row["alipay_public_key"],
+        merchant_private_key=decrypt_secret(row["merchant_private_key"]),
+        alipay_public_key=decrypt_secret(row["alipay_public_key"]),
         app_cert_sn=row["app_cert_sn"] or "",
         alipay_root_cert_sn=row["alipay_root_cert_sn"] or "",
         notify_url=row["notify_url"] or default_notify_url(),
@@ -433,6 +434,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/logout":
             return self.redirect("/login", {"Set-Cookie": session_cookie(SESSION_COOKIE, "", max_age=0)})
+        if path == "/orders/cleanup":
+            return self.cleanup_orders()
         if path == "/orders":
             return self.create_order()
         if path.startswith("/orders/") and path.endswith("/query"):
@@ -521,8 +524,37 @@ class Handler(BaseHTTPRequestHandler):
         body = f"""
         <h1>订单记录</h1><form class="filters" method="get"><input name="q" value="{e(q)}" placeholder="搜索订单号、标题、支付宝交易号">
         <select name="status">{select}</select><button>查询</button></form>{orders_table(rows)}
+        <section class="card"><h2>订单清理</h2><form class="form" method="post" action="/orders/cleanup">
+          <label>开始时间<input type="datetime-local" name="cleanup_start"></label>
+          <label>结束时间<input type="datetime-local" name="cleanup_end"></label>
+          <button name="cleanup_mode" value="range">清理所选时段订单</button>
+          <button name="cleanup_mode" value="all" onclick="return confirm('确认清除所有订单记录？此操作不可恢复。')">一键清除所有订单记录</button>
+        </form></section>
         """
         self.send_bytes(page("订单", body))
+
+    def cleanup_orders(self) -> None:
+        data = self.form()
+        mode = data.get("cleanup_mode", "range")
+        if mode == "all":
+            with connect() as conn:
+                conn.execute("DELETE FROM orders")
+            return self.redirect("/orders")
+        start_at = data.get("cleanup_start", "").strip()
+        end_at = data.get("cleanup_end", "").strip()
+        clauses: list[str] = []
+        params: list[Any] = []
+        if start_at:
+            clauses.append("created_at >= ?")
+            params.append(start_at.replace("T", " ") + (":00" if len(start_at) == 16 else ""))
+        if end_at:
+            clauses.append("created_at <= ?")
+            params.append(end_at.replace("T", " ") + (":59" if len(end_at) == 16 else ""))
+        if clauses:
+            with connect() as conn:
+                conn.execute("DELETE FROM orders WHERE " + " AND ".join(clauses), tuple(params))
+        return self.redirect("/orders")
+
 
     def new_order(self) -> None:
         accounts = all_rows("SELECT id, name FROM accounts WHERE enabled = 1 ORDER BY name")
@@ -645,8 +677,8 @@ class Handler(BaseHTTPRequestHandler):
                 data.get("name", ""),
                 data.get("app_id", ""),
                 data.get("gateway", "https://openapi.alipay.com/gateway.do"),
-                data.get("merchant_private_key", ""),
-                data.get("alipay_public_key", ""),
+                encrypt_secret(data.get("merchant_private_key", "")),
+                encrypt_secret(data.get("alipay_public_key", "")),
                 data.get("app_cert_sn", ""),
                 data.get("alipay_root_cert_sn", ""),
                 data.get("notify_url", ""),

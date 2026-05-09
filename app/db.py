@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .config import get_settings
+from .crypto import encrypt_secret
 
 
 SCHEMA = """
@@ -102,6 +103,12 @@ def init_db() -> None:
             conn.execute(
                 "INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)",
                 (key, value),
+            )
+        rows = conn.execute("SELECT id, merchant_private_key, alipay_public_key FROM accounts").fetchall()
+        for row in rows:
+            conn.execute(
+                "UPDATE accounts SET merchant_private_key = ?, alipay_public_key = ? WHERE id = ?",
+                (encrypt_secret(row["merchant_private_key"]), encrypt_secret(row["alipay_public_key"]), row["id"]),
             )
 
 
