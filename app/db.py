@@ -60,6 +60,7 @@ DEFAULT_SETTINGS = {
     "enable_polling": "1",
     "poll_interval_seconds": "8",
     "poll_timeout_minutes": "30",
+    "order_timeout_minutes": "30",
     "enable_2fa": "0",
     "totp_secret": "",
 }

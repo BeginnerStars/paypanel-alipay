@@ -9,10 +9,19 @@
 - **订单管理**：订单列表、关键字搜索、状态筛选、概览统计、手动查询状态。
 - **多账户接入**：可配置多个支付宝开放平台应用，支持按失败次数轮询，请求失败自动切换下一个可用账户。
 - **订单监控**：可开启后台轮询 `alipay.trade.query`，同时支持支付宝异步通知 `/alipay/notify`。
+- **订单超时**：可在设置页配置订单超时关闭分钟数，并同步写入支付宝请求的 `timeout_express`。
 - **登录保护**：后台需要账号密码登录，可选开启基于 TOTP 的 2FA。
 - **轻量部署**：仅依赖 Python 标准库、SQLite 和系统 `openssl` 命令，不再需要通过 pip 安装运行时依赖；迁移时复制 `.env` 与 `data/` 即可。
 
 ## 快速开始
+
+### 一键 Docker 部署
+
+```bash
+./deploy.sh
+```
+
+脚本会自动创建 `.env`、生成随机 `APP_SECRET_KEY`，当检测到默认管理员密码时会替换为随机密码，然后执行 `docker compose up -d --build`。
 
 ### 本地运行
 
@@ -32,7 +41,7 @@ APP_ADMIN_PASSWORD=change-me-now
 
 > 说明：面板自身不需要 pip 依赖。支付宝 RSA2 签名/验签通过系统 `openssl` 命令完成，常见 Linux 发行版与 Docker 镜像均已提供。
 
-### Docker Compose
+### 手动 Docker Compose
 
 ```bash
 cp .env.example .env
@@ -66,7 +75,7 @@ APP_BASE_URL=https://你的域名
 
 - `WAIT_BUYER_PAY`：等待买家付款
 - `TRADE_SUCCESS` / `TRADE_FINISHED`：支付成功
-- `TRADE_CLOSED`：交易关闭
+- `TRADE_CLOSED`：交易关闭，或超过面板设置的订单超时时间后自动关闭
 - `FAILED`：创建收款请求失败，详情页会显示错误
 
 ## 迁移与备份

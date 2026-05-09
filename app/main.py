@@ -137,6 +137,37 @@ def update_order_status(order_id: int, response: dict[str, Any], raw: str = "") 
     )
 
 
+def order_timeout_minutes(panel_settings: dict[str, str] | None = None) -> int:
+    panel_settings = panel_settings or settings_map()
+    try:
+        return max(0, int(panel_settings.get("order_timeout_minutes", "30")))
+    except ValueError:
+        return 30
+
+
+def apply_order_timeout_biz_content(biz_content: dict[str, Any]) -> None:
+    minutes = order_timeout_minutes()
+    if minutes > 0:
+        biz_content["timeout_express"] = f"{minutes}m"
+
+
+def expire_timeout_orders(panel_settings: dict[str, str] | None = None) -> int:
+    minutes = order_timeout_minutes(panel_settings)
+    if minutes <= 0:
+        return 0
+    deadline = (datetime.now() - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE orders
+            SET status = 'TRADE_CLOSED', last_error = '订单超时自动关闭', updated_at = CURRENT_TIMESTAMP
+            WHERE status IN ('CREATED', 'WAIT_BUYER_PAY') AND created_at < ?
+            """,
+            (deadline,),
+        )
+        return int(cur.rowcount or 0)
+
+
 def build_payment(order_id: int, preferred_account_id: int | None = None) -> None:
     order = one("SELECT * FROM orders WHERE id = ?", (order_id,))
     if not order:
@@ -153,6 +184,7 @@ def build_payment(order_id: int, preferred_account_id: int | None = None) -> Non
                 "total_amount": order["amount"],
                 "subject": order["subject"],
             }
+            apply_order_timeout_biz_content(biz_content)
             pay_type = order["pay_type"]
             if pay_type == "precreate":
                 response = alipay.request_api(account, "alipay.trade.precreate", biz_content)
@@ -204,6 +236,7 @@ def polling_worker() -> None:
     while True:
         panel_settings = settings_map()
         interval = max(3, int(panel_settings.get("poll_interval_seconds", "8")))
+        expire_timeout_orders(panel_settings)
         if panel_settings.get("enable_polling") == "1":
             timeout = datetime.now() - timedelta(minutes=int(panel_settings.get("poll_timeout_minutes", "30")))
             orders = all_rows(
@@ -449,6 +482,7 @@ class Handler(BaseHTTPRequestHandler):
         account = row_to_account(account_row)
         method = "alipay.trade.page.pay" if order["pay_type"] == "page" else "alipay.trade.wap.pay"
         biz_content = {"out_trade_no": order["out_trade_no"], "total_amount": order["amount"], "subject": order["subject"]}
+        apply_order_timeout_biz_content(biz_content)
         biz_content["product_code"] = "FAST_INSTANT_TRADE_PAY" if order["pay_type"] == "page" else "QUICK_WAP_WAY"
         if order["pay_type"] == "wap":
             biz_content["quit_url"] = get_settings().base_url
@@ -525,6 +559,7 @@ class Handler(BaseHTTPRequestHandler):
           <label class="checkbox"><input type="checkbox" name="enable_polling" value="1" {'checked' if panel.get('enable_polling') == '1' else ''}> 开启订单状态自动轮询</label>
           <label>轮询间隔（秒）<input name="poll_interval_seconds" type="number" min="3" value="{e(panel.get('poll_interval_seconds', '8'))}"></label>
           <label>轮询超时（分钟）<input name="poll_timeout_minutes" type="number" min="1" value="{e(panel.get('poll_timeout_minutes', '30'))}"></label>
+          <label>订单超时关闭（分钟，0 表示不自动关闭）<input name="order_timeout_minutes" type="number" min="0" value="{e(panel.get('order_timeout_minutes', '30'))}"></label>
           <label class="checkbox"><input type="checkbox" name="enable_2fa" value="1" {'checked' if panel.get('enable_2fa') == '1' else ''}> 开启 2FA 登录</label>
           <button class="primary">保存设置</button></form><section class="card"><h2>2FA 密钥</h2>{totp}
           <form method="post" action="/settings/2fa/regenerate"><button>生成/重置 2FA 密钥</button></form></section>
@@ -538,6 +573,7 @@ class Handler(BaseHTTPRequestHandler):
             "enable_polling": "1" if data.get("enable_polling") == "1" else "0",
             "poll_interval_seconds": str(max(3, int(data.get("poll_interval_seconds") or "8"))),
             "poll_timeout_minutes": str(max(1, int(data.get("poll_timeout_minutes") or "30"))),
+            "order_timeout_minutes": str(max(0, int(data.get("order_timeout_minutes") or "30"))),
             "enable_2fa": "1" if data.get("enable_2fa") == "1" else "0",
         }
         with connect() as conn:
