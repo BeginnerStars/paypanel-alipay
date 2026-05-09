@@ -1,8 +1,2 @@
-fastapi==0.115.6
-uvicorn[standard]==0.32.1
-jinja2==3.1.4
-python-multipart==0.0.19
-itsdangerous==2.2.0
-cryptography==44.0.0
-qrcode[pil]==8.0
-pyotp==2.9.0
+# Runtime uses only the Python standard library plus the system `openssl` binary.
+# This file is intentionally empty so offline/minimal deployments do not need pip downloads.

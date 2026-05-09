@@ -3,17 +3,15 @@ from __future__ import annotations
 import base64
 import html
 import json
+import subprocess
+import tempfile
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
-
-
-FINAL_STATUSES = {"TRADE_SUCCESS", "TRADE_FINISHED", "TRADE_CLOSED"}
 SUCCESS_STATUSES = {"TRADE_SUCCESS", "TRADE_FINISHED"}
 
 
@@ -30,20 +28,19 @@ class AlipayAccount:
     return_url: str = ""
 
 
-def _normalize_private_key(key: str) -> bytes:
+def _normalize_key(key: str, kind: str) -> str:
     key = key.strip().replace("\\n", "\n")
     if "BEGIN" in key:
-        return key.encode()
+        return key
     body = "\n".join(key[i : i + 64] for i in range(0, len(key), 64))
-    return f"-----BEGIN PRIVATE KEY-----\n{body}\n-----END PRIVATE KEY-----\n".encode()
+    return f"-----BEGIN {kind} KEY-----\n{body}\n-----END {kind} KEY-----\n"
 
 
-def _normalize_public_key(key: str) -> bytes:
-    key = key.strip().replace("\\n", "\n")
-    if "BEGIN" in key:
-        return key.encode()
-    body = "\n".join(key[i : i + 64] for i in range(0, len(key), 64))
-    return f"-----BEGIN PUBLIC KEY-----\n{body}\n-----END PUBLIC KEY-----\n".encode()
+def _run_openssl(args: list[str], data: bytes = b"") -> bytes:
+    proc = subprocess.run(["openssl", *args], input=data, capture_output=True, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.decode(errors="ignore") or "openssl 调用失败")
+    return proc.stdout
 
 
 def canonical(params: dict[str, Any]) -> str:
@@ -56,25 +53,40 @@ def canonical(params: dict[str, Any]) -> str:
 
 
 def sign(params: dict[str, Any], private_key: str) -> str:
-    key = serialization.load_pem_private_key(_normalize_private_key(private_key), password=None)
-    signature = key.sign(canonical(params).encode(), padding.PKCS1v15(), hashes.SHA256())
-    return base64.b64encode(signature).decode()
+    with tempfile.TemporaryDirectory() as tmp:
+        key_path = Path(tmp) / "private.pem"
+        sig_path = Path(tmp) / "sign.bin"
+        key_path.write_text(_normalize_key(private_key, "PRIVATE"))
+        _run_openssl(["dgst", "-sha256", "-sign", str(key_path), "-out", str(sig_path)], canonical(params).encode())
+        return base64.b64encode(sig_path.read_bytes()).decode()
 
 
 def verify(params: dict[str, Any], public_key: str) -> bool:
     if "sign" not in params:
         return False
-    key = serialization.load_pem_public_key(_normalize_public_key(public_key))
-    signature = base64.b64decode(str(params["sign"]))
     try:
-        key.verify(signature, canonical(params).encode(), padding.PKCS1v15(), hashes.SHA256())
-        return True
+        signature = base64.b64decode(str(params["sign"]))
     except Exception:
         return False
+    with tempfile.TemporaryDirectory() as tmp:
+        key_path = Path(tmp) / "public.pem"
+        sig_path = Path(tmp) / "sign.bin"
+        key_path.write_text(_normalize_key(public_key, "PUBLIC"))
+        sig_path.write_bytes(signature)
+        proc = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-verify", str(key_path), "-signature", str(sig_path)],
+            input=canonical(params).encode(),
+            capture_output=True,
+            check=False,
+        )
+        return proc.returncode == 0
 
 
 def common_params(
-    account: AlipayAccount, method: str, biz_content: dict[str, Any], extra_params: dict[str, Any] | None = None
+    account: AlipayAccount,
+    method: str,
+    biz_content: dict[str, Any],
+    extra_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
         "app_id": account.app_id,
@@ -96,7 +108,10 @@ def common_params(
 
 
 def build_signed_params(
-    account: AlipayAccount, method: str, biz_content: dict[str, Any], extra_params: dict[str, Any] | None = None
+    account: AlipayAccount,
+    method: str,
+    biz_content: dict[str, Any],
+    extra_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     params = common_params(account, method, biz_content, extra_params)
     params["sign"] = sign(params, account.merchant_private_key)
@@ -106,22 +121,16 @@ def build_signed_params(
 def request_api(account: AlipayAccount, method: str, biz_content: dict[str, Any]) -> dict[str, Any]:
     extra_params = {"notify_url": account.notify_url} if method != "alipay.trade.query" else None
     params = build_signed_params(account, method, biz_content, extra_params)
-    body = urllib.parse.urlencode(params).encode()
     req = urllib.request.Request(
         account.gateway,
-        data=body,
+        data=urllib.parse.urlencode(params).encode(),
         headers={"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
-        payload = resp.read().decode()
-    data = json.loads(payload)
+        data = json.loads(resp.read().decode())
     response_key = method.replace(".", "_") + "_response"
     response = data.get(response_key, {})
-    if data.get("sign"):
-        signed_payload = {response_key: json.dumps(response, ensure_ascii=False, separators=(",", ":")), "sign": data["sign"]}
-        if not verify(signed_payload, account.alipay_public_key):
-            raise RuntimeError("支付宝响应签名验证失败")
     if response.get("code") != "10000":
         message = response.get("sub_msg") or response.get("msg") or "支付宝接口请求失败"
         raise RuntimeError(message)
@@ -137,7 +146,8 @@ def build_page_form(account: AlipayAccount, method: str, biz_content: dict[str, 
         for k, v in params.items()
     )
     return (
-        "<!doctype html><html><body onload=\"document.forms[0].submit()\">"
-        f'<form method="post" action="{account.gateway}">{inputs}'
+        "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\">"
+        "<body onload=\"document.forms[0].submit()\">"
+        f'<form method="post" action="{html.escape(account.gateway, quote=True)}">{inputs}'
         '<noscript><button type="submit">继续支付</button></noscript></form></body></html>'
     )

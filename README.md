@@ -4,24 +4,30 @@
 
 ## 功能
 
-- **发起收款**：支持当面付 `alipay.trade.precreate`、电脑网站支付 `alipay.trade.page.pay`、手机网站支付 `alipay.trade.wap.pay`。
-- **二维码付款**：当面付直接展示支付宝返回的 `qr_code`；网站支付展示内部跳转链接二维码，客户扫码后进入支付宝收银台。
+- **发起收款**：支持支付宝开放平台的当面付 `alipay.trade.precreate`、电脑网站支付 `alipay.trade.page.pay`、手机网站支付 `alipay.trade.wap.pay`。
+- **二维码付款**：当面付展示支付宝返回的 `qr_code`；网站支付展示内部跳转链接二维码，客户扫码后进入支付宝收银台。
 - **订单管理**：订单列表、关键字搜索、状态筛选、概览统计、手动查询状态。
 - **多账户接入**：可配置多个支付宝开放平台应用，支持按失败次数轮询，请求失败自动切换下一个可用账户。
 - **订单监控**：可开启后台轮询 `alipay.trade.query`，同时支持支付宝异步通知 `/alipay/notify`。
+- **订单超时**：可在设置页配置订单超时关闭分钟数，并同步写入支付宝请求的 `timeout_express`。
 - **登录保护**：后台需要账号密码登录，可选开启基于 TOTP 的 2FA。
-- **轻量部署**：FastAPI + SQLite，默认数据保存在 `data/paypanel.db`，迁移时复制 `.env` 与 `data/` 即可。
+- **轻量部署**：仅依赖 Python 标准库、SQLite 和系统 `openssl` 命令，不再需要通过 pip 安装运行时依赖；迁移时复制 `.env` 与 `data/` 即可。
 
 ## 快速开始
+
+### 一键 Docker 部署
+
+```bash
+./deploy.sh
+```
+
+脚本会自动创建 `.env`、生成随机 `APP_SECRET_KEY`，当检测到默认管理员密码时会替换为随机密码，然后执行 `docker compose up -d --build`。
 
 ### 本地运行
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
 cp .env.example .env
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+python -m app.main
 ```
 
 打开 `http://localhost:8000`，默认登录信息来自 `.env`：
@@ -33,19 +39,19 @@ APP_ADMIN_PASSWORD=change-me-now
 
 请务必修改 `APP_SECRET_KEY` 和 `APP_ADMIN_PASSWORD` 后再部署到公网。
 
-### Docker Compose
+> 说明：面板自身不需要 pip 依赖。支付宝 RSA2 签名/验签通过系统 `openssl` 命令完成，常见 Linux 发行版与 Docker 镜像均已提供。
+
+### 手动 Docker Compose
 
 ```bash
 cp .env.example .env
-# 编辑 .env
-APP_SECRET_KEY=$(python - <<'PY'
-import secrets
-print(secrets.token_urlsafe(48))
-PY
-) docker compose up -d --build
+# 编辑 .env 后启动
+docker compose up -d --build
 ```
 
 ## 支付宝开放平台配置
+
+支付宝开放平台公共能力文档入口：https://opendocs.alipay.com/common
 
 1. 在支付宝开放平台创建应用并开通所需产品：当面付、电脑网站支付、手机网站支付。
 2. 在面板的 **账户** 页面新增账户，填写：
@@ -69,7 +75,7 @@ APP_BASE_URL=https://你的域名
 
 - `WAIT_BUYER_PAY`：等待买家付款
 - `TRADE_SUCCESS` / `TRADE_FINISHED`：支付成功
-- `TRADE_CLOSED`：交易关闭
+- `TRADE_CLOSED`：交易关闭，或超过面板设置的订单超时时间后自动关闭
 - `FAILED`：创建收款请求失败，详情页会显示错误
 
 ## 迁移与备份
@@ -78,7 +84,7 @@ APP_BASE_URL=https://你的域名
 
 ```text
 .env
-/data/paypanel.db
+data/paypanel.db
 ```
 
 迁移到新机器时，停止服务后复制以上文件，再启动服务即可。
