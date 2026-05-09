@@ -28,6 +28,12 @@ class Settings:
         self.session_max_age = int(getenv("APP_SESSION_MAX_AGE", "28800"))
         self.host = getenv("APP_HOST", "0.0.0.0")
         self.port = int(getenv("APP_PORT", "8000"))
+        self.panel_domain = getenv("APP_PANEL_DOMAIN", "")
+        self.enforce_panel_domain = getenv("APP_ENFORCE_PANEL_DOMAIN", "0")
+        self.callback_base_url = getenv("APP_CALLBACK_BASE_URL", "")
+        self.ssl_enabled = getenv("APP_SSL_ENABLED", "0")
+        self.ssl_certfile = getenv("APP_SSL_CERTFILE", "")
+        self.ssl_keyfile = getenv("APP_SSL_KEYFILE", "")
 
 
 @lru_cache

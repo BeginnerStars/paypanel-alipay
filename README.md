@@ -10,6 +10,7 @@
 - **多账户接入**：可配置多个支付宝开放平台应用，支持按失败次数轮询，请求失败自动切换下一个可用账户。
 - **订单监控**：可开启后台轮询 `alipay.trade.query`，同时支持支付宝异步通知 `/alipay/notify`。
 - **订单超时**：可在设置页配置订单超时关闭分钟数，并同步写入支付宝请求的 `timeout_express`。
+- **域名与 HTTPS**：可绑定面板访问域名、限制 Host 访问、配置内置 HTTPS 证书，并单独设置支付宝异步通知回调域名。
 - **登录保护**：后台需要账号密码登录，可选开启基于 TOTP 的 2FA。
 - **轻量部署**：仅依赖 Python 标准库、SQLite 和系统 `openssl` 命令，不再需要通过 pip 安装运行时依赖；迁移时复制 `.env` 与 `data/` 即可。
 
@@ -48,6 +49,13 @@ cp .env.example .env
 # 编辑 .env 后启动
 docker compose up -d --build
 ```
+
+## 域名、HTTPS 与回调
+
+- **绑定访问域名**：在设置页填写 `pay.example.com` 并开启“仅允许绑定域名访问面板”后，非绑定 Host 会返回 421。
+- **自定义回调域名**：在设置页填写 `https://notify.example.com` 后，默认支付宝异步通知地址会变为 `https://notify.example.com/alipay/notify`；单个支付宝账户仍可在账户页覆盖通知 URL。
+- **内置 HTTPS**：可在设置页启用并填写证书/私钥路径，例如 Docker 部署时将证书放到 `./certs`，填写 `/app/certs/fullchain.pem` 与 `/app/certs/privkey.pem`，保存后重启容器生效。
+- 如果已经在 Nginx/Caddy/Traefik 等反向代理上终止 TLS，通常保持内置 HTTPS 关闭，只设置 `APP_BASE_URL=https://你的域名` 即可。
 
 ## 支付宝开放平台配置
 

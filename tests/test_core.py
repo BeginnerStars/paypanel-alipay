@@ -24,6 +24,14 @@ class MainHelperTests(unittest.TestCase):
         self.assertEqual(bounded_int("1", 8, 3), 3)
         self.assertEqual(bounded_int("999999", 8, 3, 60), 60)
 
+    def test_domain_and_url_helpers_normalize_values(self) -> None:
+        from app.main import host_name, normalize_base_url
+
+        self.assertEqual(normalize_base_url("notify.example.com/"), "https://notify.example.com")
+        self.assertEqual(normalize_base_url("http://pay.example.com/"), "http://pay.example.com")
+        self.assertEqual(host_name("Pay.Example.Com:8443"), "pay.example.com")
+        self.assertEqual(host_name("https://Pay.Example.Com/path"), "pay.example.com")
+
     def test_session_cookie_adds_secure_for_https_base_url(self) -> None:
         from app.config import get_settings
         from app.main import session_cookie
@@ -75,6 +83,31 @@ class TimeoutTests(unittest.TestCase):
             self.assertIsNotNone(row)
             self.assertEqual(row["status"], "TRADE_CLOSED")
             self.assertEqual(row["last_error"], "订单超时自动关闭")
+
+
+class DomainSettingsTests(unittest.TestCase):
+    def test_callback_base_url_overrides_default_notify_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["APP_DATABASE_PATH"] = str(Path(tmp) / "paypanel.db")
+            os.environ["APP_SECRET_KEY"] = "test-secret"
+            os.environ["APP_BASE_URL"] = "https://pay.example.com"
+            os.environ["APP_CALLBACK_BASE_URL"] = "https://notify.example.com/"
+            os.environ["APP_PANEL_DOMAIN"] = "pay-bound.example.com"
+
+            from app.config import get_settings
+            from app.db import init_db, settings_map
+            from app.main import bound_panel_domain, default_notify_url, panel_base_url
+
+            get_settings.cache_clear()
+            init_db()
+            self.assertEqual(settings_map()["callback_base_url"], "https://notify.example.com/")
+            self.assertEqual(default_notify_url(), "https://notify.example.com/alipay/notify")
+            self.assertEqual(bound_panel_domain(), "pay-bound.example.com")
+            self.assertEqual(panel_base_url(), "https://pay-bound.example.com")
+
+            for key in ("APP_DATABASE_PATH", "APP_SECRET_KEY", "APP_BASE_URL", "APP_CALLBACK_BASE_URL", "APP_PANEL_DOMAIN"):
+                os.environ.pop(key, None)
+            get_settings.cache_clear()
 
 
 class AlipayCryptoTests(unittest.TestCase):

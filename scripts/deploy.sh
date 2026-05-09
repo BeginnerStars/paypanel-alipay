@@ -67,7 +67,7 @@ PY
   warn "请保存该密码，后续可在 .env 中修改 APP_ADMIN_PASSWORD。"
 fi
 
-mkdir -p data
+mkdir -p data certs
 chmod 700 data || true
 
 COMPOSE="$(compose_cmd)"

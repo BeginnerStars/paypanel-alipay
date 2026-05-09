@@ -63,6 +63,12 @@ DEFAULT_SETTINGS = {
     "order_timeout_minutes": "30",
     "enable_2fa": "0",
     "totp_secret": "",
+    "panel_domain": "",
+    "enforce_panel_domain": "0",
+    "callback_base_url": "",
+    "ssl_enabled": "0",
+    "ssl_certfile": "",
+    "ssl_keyfile": "",
 }
 
 
@@ -81,9 +87,18 @@ def connect() -> Iterator[sqlite3.Connection]:
 
 
 def init_db() -> None:
+    runtime_settings = get_settings()
+    env_defaults = {
+        "panel_domain": runtime_settings.panel_domain,
+        "enforce_panel_domain": runtime_settings.enforce_panel_domain,
+        "callback_base_url": runtime_settings.callback_base_url,
+        "ssl_enabled": runtime_settings.ssl_enabled,
+        "ssl_certfile": runtime_settings.ssl_certfile,
+        "ssl_keyfile": runtime_settings.ssl_keyfile,
+    }
     with connect() as conn:
         conn.executescript(SCHEMA)
-        for key, value in DEFAULT_SETTINGS.items():
+        for key, value in {**DEFAULT_SETTINGS, **env_defaults}.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)",
                 (key, value),

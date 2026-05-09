@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import mimetypes
+import ssl
 import threading
 import time
 import urllib.parse
@@ -32,6 +33,65 @@ ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = ROOT / "static"
 
 
+def normalize_base_url(value: str) -> str:
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    if "://" not in value:
+        value = "https://" + value
+    return value.rstrip("/")
+
+
+def host_name(value: str) -> str:
+    value = value.split(",", 1)[0].strip().lower()
+    if not value:
+        return ""
+    if "://" in value:
+        value = urllib.parse.urlparse(value).netloc
+    if value.startswith("[") and "]" in value:
+        return value[1 : value.index("]")]
+    return value.rsplit(":", 1)[0]
+
+
+def panel_settings_value(key: str, default: str = "") -> str:
+    try:
+        return settings_map().get(key, default).strip()
+    except Exception:
+        return default.strip()
+
+
+def panel_base_url() -> str:
+    configured_domain = host_name(panel_settings_value("panel_domain"))
+    if configured_domain:
+        scheme = "https" if ssl_is_enabled() or normalize_base_url(get_settings().base_url).startswith("https://") else "http"
+        return f"{scheme}://{configured_domain}"
+    return normalize_base_url(get_settings().base_url)
+
+
+def callback_base_url() -> str:
+    configured = normalize_base_url(panel_settings_value("callback_base_url"))
+    return configured or panel_base_url()
+
+
+def ssl_is_enabled(panel_settings: dict[str, str] | None = None) -> bool:
+    if panel_settings is None:
+        try:
+            panel_settings = settings_map()
+        except Exception:
+            return get_settings().ssl_enabled == "1"
+    return panel_settings.get("ssl_enabled") == "1"
+
+
+def bound_panel_domain(panel_settings: dict[str, str] | None = None) -> str:
+    panel_settings = panel_settings or settings_map()
+    configured = host_name(panel_settings.get("panel_domain", ""))
+    if configured:
+        return configured
+    parsed = urllib.parse.urlparse(panel_base_url())
+    return host_name(parsed.netloc)
+
+
+
 def row_to_account(row: Any) -> AlipayAccount:
     return AlipayAccount(
         id=row["id"],
@@ -42,12 +102,12 @@ def row_to_account(row: Any) -> AlipayAccount:
         app_cert_sn=row["app_cert_sn"] or "",
         alipay_root_cert_sn=row["alipay_root_cert_sn"] or "",
         notify_url=row["notify_url"] or default_notify_url(),
-        return_url=row["return_url"] or get_settings().base_url,
+        return_url=row["return_url"] or panel_base_url(),
     )
 
 
 def default_notify_url() -> str:
-    return f"{get_settings().base_url}/alipay/notify"
+    return f"{callback_base_url()}/alipay/notify"
 
 
 def require_amount(amount: str) -> str:
@@ -87,7 +147,7 @@ def session_cookie(name: str, value: str, max_age: int | None = None) -> str:
     parts = [f"{name}={value}", "Path=/", "HttpOnly", "SameSite=Lax"]
     if max_age is not None:
         parts.insert(2, f"Max-Age={max_age}")
-    if get_settings().base_url.startswith("https://"):
+    if panel_base_url().startswith("https://") or ssl_is_enabled():
         parts.append("Secure")
     return "; ".join(parts)
 
@@ -216,8 +276,8 @@ def build_payment(order_id: int, preferred_account_id: int | None = None) -> Non
                 method = "alipay.trade.page.pay" if pay_type == "page" else "alipay.trade.wap.pay"
                 biz_content["product_code"] = "FAST_INSTANT_TRADE_PAY" if pay_type == "page" else "QUICK_WAP_WAY"
                 if pay_type == "wap":
-                    biz_content["quit_url"] = get_settings().base_url
-                pay_url = f"{get_settings().base_url}/orders/{order_id}/pay"
+                    biz_content["quit_url"] = panel_base_url()
+                pay_url = f"{panel_base_url()}/orders/{order_id}/pay"
                 qr_code = pay_url
                 raw_response = json.dumps({"method": method, "account_id": account.id}, ensure_ascii=False)
             execute(
@@ -304,6 +364,22 @@ class Handler(BaseHTTPRequestHandler):
     def username(self) -> str | None:
         return read_session_cookie(self.headers.get("Cookie"))
 
+    def host_is_allowed(self) -> bool:
+        panel_settings = settings_map()
+        if panel_settings.get("enforce_panel_domain") != "1":
+            return True
+        expected = bound_panel_domain(panel_settings)
+        if not expected:
+            return True
+        supplied = host_name(self.headers.get("Host", ""))
+        return supplied == expected
+
+    def reject_bad_host(self) -> None:
+        self.send_bytes(
+            page("域名未绑定", f"<h1>域名未绑定</h1><p>请使用绑定域名访问：<code>{e(bound_panel_domain())}</code></p>", logged_in=False),
+            status=421,
+        )
+
     def require_login(self) -> bool:
         if self.username():
             return True
@@ -318,6 +394,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.static(path)
         if path == "/healthz":
             return self.healthz()
+        if not self.host_is_allowed():
+            return self.reject_bad_host()
         if path == "/login":
             return self.login_page()
         if path == "/alipay/notify":
@@ -349,6 +427,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.login()
         if path == "/alipay/notify":
             return self.alipay_notify(self.form())
+        if not self.host_is_allowed():
+            return self.reject_bad_host()
         if not self.require_login():
             return
         if path == "/logout":
@@ -515,7 +595,7 @@ class Handler(BaseHTTPRequestHandler):
         apply_order_timeout_biz_content(biz_content)
         biz_content["product_code"] = "FAST_INSTANT_TRADE_PAY" if order["pay_type"] == "page" else "QUICK_WAP_WAY"
         if order["pay_type"] == "wap":
-            biz_content["quit_url"] = get_settings().base_url
+            biz_content["quit_url"] = panel_base_url()
         self.send_bytes(alipay.build_page_form(account, method, biz_content).encode())
 
     def alipay_notify(self, form: dict[str, str]) -> None:
@@ -585,6 +665,12 @@ class Handler(BaseHTTPRequestHandler):
         totp = f'<img class="totp" src="{e(qr_img_src(uri))}" alt="TOTP 二维码"><p>用 Authenticator 扫码后，再开启 2FA。</p>' if uri else "<p>尚未生成 2FA 密钥。</p>"
         body = f"""
         <h1>设置</h1><form class="card form" method="post" action="/settings">
+          <label>绑定访问域名（如 pay.example.com）<input name="panel_domain" value="{e(panel.get('panel_domain', ''))}" placeholder="pay.example.com"></label>
+          <label class="checkbox"><input type="checkbox" name="enforce_panel_domain" value="1" {'checked' if panel.get('enforce_panel_domain') == '1' else ''}> 仅允许绑定域名访问面板</label>
+          <label>自定义回调域名/地址（留空使用 APP_BASE_URL）<input name="callback_base_url" value="{e(panel.get('callback_base_url', ''))}" placeholder="https://notify.example.com"></label>
+          <label class="checkbox"><input type="checkbox" name="ssl_enabled" value="1" {'checked' if panel.get('ssl_enabled') == '1' else ''}> 启用内置 HTTPS（保存后重启生效）</label>
+          <label>SSL 证书文件路径<input name="ssl_certfile" value="{e(panel.get('ssl_certfile', ''))}" placeholder="/app/certs/fullchain.pem"></label>
+          <label>SSL 私钥文件路径<input name="ssl_keyfile" value="{e(panel.get('ssl_keyfile', ''))}" placeholder="/app/certs/privkey.pem"></label>
           <label class="checkbox"><input type="checkbox" name="enable_account_rotation" value="1" {'checked' if panel.get('enable_account_rotation') == '1' else ''}> 开启多账户轮询/失败切换</label>
           <label class="checkbox"><input type="checkbox" name="enable_polling" value="1" {'checked' if panel.get('enable_polling') == '1' else ''}> 开启订单状态自动轮询</label>
           <label>轮询间隔（秒）<input name="poll_interval_seconds" type="number" min="3" value="{e(panel.get('poll_interval_seconds', '8'))}"></label>
@@ -599,6 +685,12 @@ class Handler(BaseHTTPRequestHandler):
     def save_settings(self) -> None:
         data = self.form()
         values = {
+            "panel_domain": host_name(data.get("panel_domain", "")),
+            "enforce_panel_domain": "1" if data.get("enforce_panel_domain") == "1" else "0",
+            "callback_base_url": normalize_base_url(data.get("callback_base_url", "")),
+            "ssl_enabled": "1" if data.get("ssl_enabled") == "1" else "0",
+            "ssl_certfile": data.get("ssl_certfile", "").strip(),
+            "ssl_keyfile": data.get("ssl_keyfile", "").strip(),
             "enable_account_rotation": "1" if data.get("enable_account_rotation") == "1" else "0",
             "enable_polling": "1" if data.get("enable_polling") == "1" else "0",
             "poll_interval_seconds": str(bounded_int(data.get("poll_interval_seconds"), 8, 3)),
@@ -626,7 +718,18 @@ def run(host: str | None = None, port: int | None = None) -> None:
     port = port or settings.port
     threading.Thread(target=polling_worker, daemon=True).start()
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"PayPanel Alipay listening on http://{host}:{port}")
+    panel_settings = settings_map()
+    scheme = "http"
+    if ssl_is_enabled(panel_settings):
+        certfile = panel_settings.get("ssl_certfile", "").strip()
+        keyfile = panel_settings.get("ssl_keyfile", "").strip()
+        if not certfile or not keyfile:
+            raise RuntimeError("已启用内置 HTTPS，但未配置 SSL 证书或私钥路径")
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile=certfile, keyfile=keyfile)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        scheme = "https"
+    print(f"PayPanel Alipay listening on {scheme}://{host}:{port}")
     server.serve_forever()
 
 
