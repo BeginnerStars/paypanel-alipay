@@ -143,7 +143,7 @@ def build_signed_params(
     return params
 
 
-def request_api(account: AlipayAccount, method: str, biz_content: dict[str, Any]) -> dict[str, Any]:
+def post_api(account: AlipayAccount, method: str, biz_content: dict[str, Any]) -> dict[str, Any]:
     extra_params = {"notify_url": account.notify_url} if method != "alipay.trade.query" else None
     params = build_signed_params(account, method, biz_content, extra_params)
     req = urllib.request.Request(
@@ -161,6 +161,11 @@ def request_api(account: AlipayAccount, method: str, biz_content: dict[str, Any]
         content = response_sign_content(payload, response_key)
         if not verify_content(content, str(data["sign"]), account.alipay_public_key):
             raise RuntimeError("支付宝响应签名验证失败")
+    return response
+
+
+def request_api(account: AlipayAccount, method: str, biz_content: dict[str, Any]) -> dict[str, Any]:
+    response = post_api(account, method, biz_content)
     if response.get("code") != "10000":
         message = response.get("sub_msg") or response.get("msg") or "支付宝接口请求失败"
         raise RuntimeError(message)

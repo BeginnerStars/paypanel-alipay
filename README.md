@@ -66,6 +66,20 @@ docker compose up -d --build
 - 异步通知地址由公共参数 `notify_url` 传入，通知到达后会先验签，再返回 `success`。
 - 支付宝 OpenAPI JSON 响应如果包含 `sign`，会按 `xxx_response` 节点原始 JSON 值进行验签。
 
+## 支付宝账户连通性检查
+
+可在不写入数据库、不保存密钥的情况下，用环境变量临时检查应用私钥、应用公钥和支付宝公钥是否可用：
+
+```bash
+ALIPAY_APP_ID=2021000000000000 \
+ALIPAY_MERCHANT_PRIVATE_KEY='你的应用私钥' \
+ALIPAY_APP_PUBLIC_KEY='你的应用公钥' \
+ALIPAY_PUBLIC_KEY='支付宝公钥' \
+python scripts/check_alipay_account.py
+```
+
+脚本会先做本地 RSA2 签名/验签，再用随机不存在的商户订单号调用 `alipay.trade.query`。如果返回 `ACQ.TRADE_NOT_EXIST`，表示签名、网关连通性和支付宝响应验签均通过，测试订单不存在是预期结果。
+
 ## 支付宝开放平台配置
 
 支付宝开放平台公共能力文档入口：https://opendocs.alipay.com/common
