@@ -21,16 +21,14 @@
 如果服务器上还没有项目文件，只需要下载 `install.sh` 后执行；脚本会拉取仓库到服务器并继续完成 Docker 或 aaPanel 部署：
 
 ```bash
-# Docker 模式：拉取项目到 /opt/paypanel-alipay 并启动
-curl -fsSL https://你的代码仓库/raw/main/install.sh -o install.sh
-sudo bash install.sh --repo https://你的代码仓库.git --mode docker
+# Docker 模式：拉取 https://github.com/BeginnerStars/paypanel-alipay 到 /opt/paypanel-alipay 并启动
+curl -fsSL https://raw.githubusercontent.com/BeginnerStars/paypanel-alipay/main/install.sh | sudo bash
 
 # aaPanel / 宝塔国际模式：拉取项目、创建 systemd 服务，并绑定域名
-curl -fsSL https://你的代码仓库/raw/main/install.sh -o install.sh
-sudo bash install.sh --repo https://你的代码仓库.git --mode aapanel --domain pay.example.com
+curl -fsSL https://raw.githubusercontent.com/BeginnerStars/paypanel-alipay/main/install.sh | sudo bash -s -- --mode aapanel --domain pay.example.com
 ```
 
-可选参数：`--dir /opt/paypanel-alipay` 指定安装目录，`--branch main` 指定分支；也可以用环境变量 `PAYPANEL_REPO_URL`、`PAYPANEL_DEPLOY_MODE`、`PAYPANEL_DOMAIN`。
+默认仓库为 `https://github.com/BeginnerStars/paypanel-alipay.git`。可选参数：`--dir /opt/paypanel-alipay` 指定安装目录，`--branch main` 指定分支，`--repo <git-url>` 指定自定义仓库；也可以用环境变量 `PAYPANEL_REPO_URL`、`PAYPANEL_DEPLOY_MODE`、`PAYPANEL_DOMAIN`。
 
 ### 已有项目目录内一键 Docker 部署
 
