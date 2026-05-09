@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}订单详情 - PayPanel{% endblock %}
+{% block content %}
+<h1>订单详情</h1>
+<section class="grid-2">
+  <div class="card">
+    <dl>
+      <dt>商户订单号</dt><dd><code>{{ order.out_trade_no }}</code></dd>
+      <dt>支付宝交易号</dt><dd>{{ order.trade_no or '-' }}</dd>
+      <dt>金额</dt><dd>¥{{ order.amount }}</dd>
+      <dt>标题</dt><dd>{{ order.subject }}</dd>
+      <dt>支付方式</dt><dd>{{ order.pay_type }}</dd>
+      <dt>账户</dt><dd>{{ order.account_name or '-' }}</dd>
+      <dt>状态</dt><dd><span class="badge {{ order.status|lower }}">{{ order.status }}</span></dd>
+      <dt>创建时间</dt><dd>{{ order.created_at }}</dd>
+      <dt>支付时间</dt><dd>{{ order.paid_at or '-' }}</dd>
+      <dt>错误</dt><dd class="error">{{ order.last_error or '-' }}</dd>
+    </dl>
+    <form method="post" action="/orders/{{ order.id }}/query"><button>立即查询状态</button></form>
+  </div>
+  <div class="card qr-card">
+    {% if qr %}<img src="{{ qr }}" alt="支付二维码"><p>将二维码发送给客户扫码付款</p><textarea readonly>{{ order.qr_code }}</textarea>{% else %}<p class="error">未生成二维码，请查看错误信息。</p>{% endif %}
+  </div>
+</section>
+{% endblock %}
