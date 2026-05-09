@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}账户 - PayPanel{% endblock %}
+{% block content %}
+<h1>支付宝账户</h1>
+<p class="muted">默认异步通知地址：<code>{{ default_notify_url }}</code></p>
+<table>
+<thead><tr><th>名称</th><th>App ID</th><th>状态</th><th>失败次数</th><th>最近错误</th><th></th></tr></thead>
+<tbody>
+{% for account in accounts %}
+<tr><td>{{ account.name }}</td><td>{{ account.app_id }}</td><td>{{ '启用' if account.enabled else '停用' }}</td><td>{{ account.failure_count }}</td><td>{{ account.last_error }}</td><td><form method="post" action="/accounts/{{ account.id }}/toggle"><button>{{ '停用' if account.enabled else '启用' }}</button></form></td></tr>
+{% else %}<tr><td colspan="6" class="muted">暂无账户</td></tr>{% endfor %}
+</tbody>
+</table>
+<h2>新增账户</h2>
+<form class="card form" method="post" action="/accounts">
+  <label>名称<input name="name" required></label>
+  <label>App ID<input name="app_id" required></label>
+  <label>网关<input name="gateway" value="https://openapi.alipay.com/gateway.do" required></label>
+  <label>应用私钥（PKCS8 PEM 或 Base64）<textarea name="merchant_private_key" rows="5" required></textarea></label>
+  <label>支付宝公钥（PEM 或 Base64）<textarea name="alipay_public_key" rows="5" required></textarea></label>
+  <label>应用公钥证书 SN（证书模式可填）<input name="app_cert_sn"></label>
+  <label>支付宝根证书 SN（证书模式可填）<input name="alipay_root_cert_sn"></label>
+  <label>异步通知 URL（留空使用默认）<input name="notify_url" placeholder="{{ default_notify_url }}"></label>
+  <label>同步返回 URL<input name="return_url"></label>
+  <button class="primary">保存账户</button>
+</form>
+{% endblock %}
