@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}概览 - PayPanel{% endblock %}
+{% block content %}
+<h1>概览</h1>
+<section class="stats">
+  <div class="card"><strong>{{ stats.total_orders or 0 }}</strong><span>总订单</span></div>
+  <div class="card"><strong>¥{{ '%.2f'|format(stats.paid_amount or 0) }}</strong><span>已收金额</span></div>
+  <div class="card"><strong>{{ stats.paid_orders or 0 }}</strong><span>成功订单</span></div>
+  <div class="card"><strong>{{ stats.pending_orders or 0 }}</strong><span>待支付</span></div>
+</section>
+<div class="actions"><a class="button primary" href="/orders/new">创建收款二维码</a></div>
+<h2>最近订单</h2>
+{% include "orders_table.html" %}
+{% endblock %}
