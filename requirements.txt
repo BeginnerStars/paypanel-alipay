@@ -1,0 +1,2 @@
+# Runtime uses only the Python standard library plus the system `openssl` binary.
+# This file is intentionally empty so offline/minimal deployments do not need pip downloads.
