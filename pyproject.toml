@@ -1,0 +1,23 @@
+[project]
+name = "paypanel-alipay"
+version = "0.1.0"
+description = "Lightweight Alipay payment panel with order tracking and multi-account failover."
+requires-python = ">=3.11"
+license = { text = "GPL-3.0-only" }
+dependencies = [
+  "fastapi==0.115.6",
+  "uvicorn[standard]==0.32.1",
+  "jinja2==3.1.4",
+  "python-multipart==0.0.19",
+  "itsdangerous==2.2.0",
+  "cryptography==44.0.0",
+  "qrcode[pil]==8.0",
+  "pyotp==2.9.0",
+]
+
+[project.optional-dependencies]
+dev = ["ruff==0.8.4"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
