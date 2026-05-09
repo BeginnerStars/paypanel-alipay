@@ -24,6 +24,31 @@
 
 脚本会自动创建 `.env`、生成随机 `APP_SECRET_KEY`，当检测到默认管理员密码时会替换为随机密码，然后执行 `docker compose up -d --build`。
 
+### aaPanel / 宝塔国际面板部署
+
+aaPanel（宝塔国际版）官网说明其提供网站、SSL、Docker/Compose 和反向代理等可视化管理能力：https://www.aapanel.com/ 。本项目推荐在 aaPanel 中让 Nginx/SSL 作为前置反向代理，PayPanel 只监听本机 `127.0.0.1:8000`。
+
+1. 将项目上传或克隆到服务器，例如：`/www/wwwroot/paypanel-alipay`。
+2. 在项目目录执行一键 systemd 安装脚本（把域名替换成你的收款面板域名）：
+
+```bash
+sudo bash scripts/install_aapanel_service.sh pay.example.com
+```
+
+3. 进入 aaPanel：**Website** -> **Add site**，添加 `pay.example.com`。
+4. 在站点设置中开启 SSL（Let's Encrypt 或手动证书均可）。反向代理目标填写：`http://127.0.0.1:8000`。如果需要手动写 Nginx 配置，可参考 `docs/aapanel-nginx.conf`。
+5. 支付宝开放平台异步通知地址配置为：`https://pay.example.com/alipay/notify`。
+
+> 使用 aaPanel/Nginx 终止 HTTPS 时，保持 `.env` 中 `APP_SSL_ENABLED=0` 即可；如果不用反向代理，才需要在面板设置里配置内置 HTTPS 证书。
+
+常用维护命令：
+
+```bash
+systemctl status paypanel-alipay
+systemctl restart paypanel-alipay
+journalctl -u paypanel-alipay -f
+```
+
 ### 本地运行
 
 ```bash
