@@ -57,6 +57,15 @@ docker compose up -d --build
 - **内置 HTTPS**：可在设置页启用并填写证书/私钥路径，例如 Docker 部署时将证书放到 `./certs`，填写 `/app/certs/fullchain.pem` 与 `/app/certs/privkey.pem`，保存后重启容器生效。
 - 如果已经在 Nginx/Caddy/Traefik 等反向代理上终止 TLS，通常保持内置 HTTPS 关闭，只设置 `APP_BASE_URL=https://你的域名` 即可。
 
+## 支付宝请求方式核对
+
+已按支付宝开放平台文档核对当前实现：
+
+- 服务端接口（当面付预创建、交易查询）使用 `POST` 提交到网关。
+- 电脑网站支付与手机网站支付使用自动提交的 `POST` HTML 表单跳转支付宝收银台。
+- 异步通知地址由公共参数 `notify_url` 传入，通知到达后会先验签，再返回 `success`。
+- 支付宝 OpenAPI JSON 响应如果包含 `sign`，会按 `xxx_response` 节点原始 JSON 值进行验签。
+
 ## 支付宝开放平台配置
 
 支付宝开放平台公共能力文档入口：https://opendocs.alipay.com/common

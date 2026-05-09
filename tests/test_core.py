@@ -113,7 +113,7 @@ class DomainSettingsTests(unittest.TestCase):
 class AlipayCryptoTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("openssl"), "openssl is required for RSA2 smoke test")
     def test_sign_and_verify_round_trip(self) -> None:
-        from app.alipay import sign, verify
+        from app.alipay import response_sign_content, sign, sign_content, verify, verify_content
 
         with tempfile.TemporaryDirectory() as tmp:
             private_key = Path(tmp) / "private.pem"
@@ -144,6 +144,12 @@ class AlipayCryptoTests(unittest.TestCase):
             self.assertTrue(verify(params, public_key.read_text()))
             params["biz_content"] = '{"out_trade_no":"PP2"}'
             self.assertFalse(verify(params, public_key.read_text()))
+
+            response_value = r'{"code":"10000","msg":"Success","qr_code":"https:\/\/qr.alipay.com\/demo"}'
+            response_sign = sign_content(response_value, private_key.read_text())
+            payload = f'{{"alipay_trade_precreate_response":{response_value},"sign":"{response_sign}"}}'
+            self.assertEqual(response_sign_content(payload, "alipay_trade_precreate_response"), response_value)
+            self.assertTrue(verify_content(response_value, response_sign, public_key.read_text()))
 
 
 if __name__ == "__main__":
