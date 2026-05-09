@@ -68,6 +68,30 @@ def qr_img_src(text: str) -> str:
     return "https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=" + urllib.parse.quote(text)
 
 
+def bounded_int(value: Any, default: int, minimum: int, maximum: int = 525_600) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return min(max(parsed, minimum), maximum)
+
+
+def path_int(value: str) -> int | None:
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def session_cookie(name: str, value: str, max_age: int | None = None) -> str:
+    parts = [f"{name}={value}", "Path=/", "HttpOnly", "SameSite=Lax"]
+    if max_age is not None:
+        parts.insert(2, f"Max-Age={max_age}")
+    if get_settings().base_url.startswith("https://"):
+        parts.append("Secure")
+    return "; ".join(parts)
+
+
 def page(title: str, body: str, logged_in: bool = True) -> bytes:
     nav = ""
     if logged_in:
@@ -139,10 +163,7 @@ def update_order_status(order_id: int, response: dict[str, Any], raw: str = "") 
 
 def order_timeout_minutes(panel_settings: dict[str, str] | None = None) -> int:
     panel_settings = panel_settings or settings_map()
-    try:
-        return max(0, int(panel_settings.get("order_timeout_minutes", "30")))
-    except ValueError:
-        return 30
+    return bounded_int(panel_settings.get("order_timeout_minutes"), 30, 0)
 
 
 def apply_order_timeout_biz_content(biz_content: dict[str, Any]) -> None:
@@ -235,10 +256,10 @@ def query_order(order_id: int) -> None:
 def polling_worker() -> None:
     while True:
         panel_settings = settings_map()
-        interval = max(3, int(panel_settings.get("poll_interval_seconds", "8")))
+        interval = bounded_int(panel_settings.get("poll_interval_seconds"), 8, 3)
         expire_timeout_orders(panel_settings)
         if panel_settings.get("enable_polling") == "1":
-            timeout = datetime.now() - timedelta(minutes=int(panel_settings.get("poll_timeout_minutes", "30")))
+            timeout = datetime.now() - timedelta(minutes=bounded_int(panel_settings.get("poll_timeout_minutes"), 30, 1))
             orders = all_rows(
                 """
                 SELECT * FROM orders
@@ -295,12 +316,15 @@ class Handler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
         if path.startswith("/static/"):
             return self.static(path)
+        if path == "/healthz":
+            return self.healthz()
         if path == "/login":
             return self.login_page()
         if path == "/alipay/notify":
             return self.alipay_notify({key: values[-1] for key, values in query.items()})
         if path.startswith("/orders/") and path.endswith("/pay"):
-            return self.pay_redirect(int(path.split("/")[2]))
+            order_id = path_int(path.split("/")[2])
+            return self.pay_redirect(order_id) if order_id is not None else self.not_found()
         if not self.require_login():
             return
         if path == "/":
@@ -310,7 +334,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/orders/new":
             return self.new_order()
         if path.startswith("/orders/"):
-            return self.order_detail(int(path.rsplit("/", 1)[-1]))
+            order_id = path_int(path.rsplit("/", 1)[-1])
+            return self.order_detail(order_id) if order_id is not None else self.not_found()
         if path == "/accounts":
             return self.accounts()
         if path == "/settings":
@@ -327,20 +352,25 @@ class Handler(BaseHTTPRequestHandler):
         if not self.require_login():
             return
         if path == "/logout":
-            return self.redirect("/login", {"Set-Cookie": f"{SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax"})
+            return self.redirect("/login", {"Set-Cookie": session_cookie(SESSION_COOKIE, "", max_age=0)})
         if path == "/orders":
             return self.create_order()
         if path.startswith("/orders/") and path.endswith("/query"):
-            return self.query_order_action(int(path.split("/")[2]))
+            order_id = path_int(path.split("/")[2])
+            return self.query_order_action(order_id) if order_id is not None else self.not_found()
         if path == "/accounts":
             return self.save_account()
         if path.startswith("/accounts/") and path.endswith("/toggle"):
-            return self.toggle_account(int(path.split("/")[2]))
+            account_id = path_int(path.split("/")[2])
+            return self.toggle_account(account_id) if account_id is not None else self.not_found()
         if path == "/settings":
             return self.save_settings()
         if path == "/settings/2fa/regenerate":
             return self.regenerate_2fa()
         self.not_found()
+
+    def healthz(self) -> None:
+        self.send_bytes(b"ok", content_type="text/plain; charset=utf-8")
 
     def static(self, path: str) -> None:
         rel = Path(path.removeprefix("/static/"))
@@ -368,7 +398,7 @@ class Handler(BaseHTTPRequestHandler):
         data = self.form()
         if not verify_credentials(data.get("username", ""), data.get("password", ""), data.get("otp", "")):
             return self.login_page("用户名、密码或验证码错误")
-        cookie = f"{SESSION_COOKIE}={make_session(data.get('username', ''))}; Path=/; HttpOnly; SameSite=Lax"
+        cookie = session_cookie(SESSION_COOKIE, make_session(data.get("username", "")))
         self.redirect("/", {"Set-Cookie": cookie})
 
     def dashboard(self) -> None:
@@ -571,9 +601,9 @@ class Handler(BaseHTTPRequestHandler):
         values = {
             "enable_account_rotation": "1" if data.get("enable_account_rotation") == "1" else "0",
             "enable_polling": "1" if data.get("enable_polling") == "1" else "0",
-            "poll_interval_seconds": str(max(3, int(data.get("poll_interval_seconds") or "8"))),
-            "poll_timeout_minutes": str(max(1, int(data.get("poll_timeout_minutes") or "30"))),
-            "order_timeout_minutes": str(max(0, int(data.get("order_timeout_minutes") or "30"))),
+            "poll_interval_seconds": str(bounded_int(data.get("poll_interval_seconds"), 8, 3)),
+            "poll_timeout_minutes": str(bounded_int(data.get("poll_timeout_minutes"), 30, 1)),
+            "order_timeout_minutes": str(bounded_int(data.get("order_timeout_minutes"), 30, 0)),
             "enable_2fa": "1" if data.get("enable_2fa") == "1" else "0",
         }
         with connect() as conn:

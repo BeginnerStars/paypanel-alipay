@@ -71,6 +71,11 @@ https://你的域名/alipay/notify
 APP_BASE_URL=https://你的域名
 ```
 
+## 运维检查
+
+- 健康检查端点：`/healthz`，正常返回 `ok`。
+- `docker-compose.yml` 已内置健康检查，便于反向代理或容器平台判断服务状态。
+
 ## 订单状态说明
 
 - `WAIT_BUYER_PAY`：等待买家付款

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -76,7 +77,10 @@ def verify_totp(secret: str, otp: str) -> bool:
     if len(otp) != 6:
         return False
     now = int(time.time())
-    return any(hmac.compare_digest(totp_code(secret, now + drift * 30), otp) for drift in (-1, 0, 1))
+    try:
+        return any(hmac.compare_digest(totp_code(secret, now + drift * 30), otp) for drift in (-1, 0, 1))
+    except (ValueError, binascii.Error):
+        return False
 
 
 def provisioning_uri(secret: str, username: str, issuer: str = "PayPanel Alipay") -> str:
