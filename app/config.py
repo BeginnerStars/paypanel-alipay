@@ -32,9 +32,6 @@ class Settings:
         self.panel_domain = getenv("APP_PANEL_DOMAIN", "")
         self.enforce_panel_domain = getenv("APP_ENFORCE_PANEL_DOMAIN", "0")
         self.callback_base_url = getenv("APP_CALLBACK_BASE_URL", "")
-        self.ssl_enabled = getenv("APP_SSL_ENABLED", "0")
-        self.ssl_certfile = getenv("APP_SSL_CERTFILE", "")
-        self.ssl_keyfile = getenv("APP_SSL_KEYFILE", "")
 
 
 @lru_cache

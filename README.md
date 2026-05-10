@@ -10,7 +10,7 @@
 - **多账户接入**：可配置多个支付宝开放平台应用，支持按失败次数轮询，请求失败自动切换下一个可用账户，支付密钥会加密后存入 SQLite。
 - **订单监控**：可开启后台轮询 `alipay.trade.query`，同时支持支付宝异步通知 `/alipay/notify`。
 - **订单超时**：可在设置页配置订单超时关闭分钟数，并同步写入支付宝请求的 `timeout_express`。
-- **域名与 HTTPS**：可绑定面板访问域名、限制 Host 访问、配置内置 HTTPS 证书，并单独设置支付宝异步通知回调域名。
+- **域名与 HTTPS**：可绑定面板访问域名、限制 Host 访问，并单独设置支付宝异步通知回调域名；HTTPS 由 Nginx、aaPanel、Caddy 等反向代理终止。
 - **登录保护**：后台需要账号密码登录，可选开启基于 TOTP 的 2FA。
 - **轻量部署**：仅依赖 Python 标准库、SQLite 和系统 `openssl` 命令，不再需要通过 pip 安装运行时依赖；迁移时复制 `.env` 与 `data/` 即可。
 
@@ -53,7 +53,7 @@ sudo bash scripts/install_aapanel_service.sh pay.example.com
 4. 在站点设置中开启 SSL（Let's Encrypt 或手动证书均可）。反向代理目标填写：`http://127.0.0.1:8000`。如果需要手动写 Nginx 配置，可参考 `docs/aapanel-nginx.conf`。
 5. 支付宝开放平台异步通知地址配置为：`https://pay.example.com/alipay/notify`。
 
-> 使用 aaPanel/Nginx 终止 HTTPS 时，保持 `.env` 中 `APP_SSL_ENABLED=0` 即可；如果不用反向代理，才需要在面板设置里配置内置 HTTPS 证书。
+> PayPanel 不再提供内置 HTTPS 服务；公网部署时请始终在 aaPanel/Nginx/Caddy/Traefik 等前置反向代理上配置 SSL。
 
 常用维护命令：
 
@@ -94,8 +94,7 @@ docker compose up -d --build
 - **站点名称**：可在设置页或 `.env` 的 `APP_SITE_NAME` 自定义面板标题、顶部品牌名和 2FA 发行方名称。
 - **绑定访问域名**：在设置页填写 `pay.example.com` 并开启“仅允许绑定域名访问面板”后，非绑定 Host 会返回 421。
 - **自定义回调域名**：在设置页填写 `https://notify.example.com` 后，默认支付宝异步通知地址会变为 `https://notify.example.com/alipay/notify`；单个支付宝账户仍可在账户页覆盖通知 URL。
-- **内置 HTTPS**：可在设置页启用并填写证书/私钥路径，例如 Docker 部署时将证书放到 `./certs`，填写 `/app/certs/fullchain.pem` 与 `/app/certs/privkey.pem`，保存后重启容器生效。
-- 如果已经在 Nginx/Caddy/Traefik 等反向代理上终止 TLS，通常保持内置 HTTPS 关闭，只设置 `APP_BASE_URL=https://你的域名` 即可。
+- **HTTPS**：面板进程只提供 HTTP 服务；如果部署到公网，请在 Nginx/Caddy/Traefik/aaPanel 等反向代理上终止 TLS，并设置 `APP_BASE_URL=https://你的域名`。
 
 ## 支付宝请求方式核对
 
@@ -104,7 +103,7 @@ docker compose up -d --build
 - 服务端接口（当面付预创建、交易查询）使用 `POST` 提交到网关。
 - 电脑网站支付与手机网站支付使用自动提交的 `POST` HTML 表单跳转支付宝收银台。
 - 账户页新增账户时优先默认“当面付”，也可单选“手机网站支付”或“电脑网站支付”，页面会按所选业务只展示该业务需要额外关注的参数。
-- 电脑网站支付默认传 `product_code=FAST_INSTANT_TRADE_PAY`，手机网站支付默认传 `product_code=QUICK_WAP_WAY` 并展示同步返回 URL；当面付预创建默认不传 `product_code`，如支付宝侧要求可在账户中单独配置。
+- 当面付固定使用密钥模式，不展示或发送证书模式参数；电脑网站支付默认传 `product_code=FAST_INSTANT_TRADE_PAY`，手机网站支付默认传 `product_code=QUICK_WAP_WAY` 并展示同步返回 URL。
 - 异步通知地址由公共参数 `notify_url` 传入，通知到达后会先验签，再返回 `success`。
 - 支付宝 OpenAPI JSON 响应如果包含 `sign`，会按 `xxx_response` 节点原始 JSON 值进行验签。
 
@@ -131,7 +130,7 @@ python scripts/check_alipay_account.py
    - App ID
    - 应用私钥（PKCS8 PEM 或去掉头尾后的 Base64）
    - 支付宝公钥（PEM 或 Base64）
-   - 如使用证书模式，可填写应用公钥证书 SN、支付宝根证书 SN
+   - 当面付使用密钥模式，不需要证书 SN；手机/电脑网站支付如使用证书模式，可填写应用公钥证书 SN、支付宝根证书 SN
 3. 将支付宝应用中的异步通知地址配置为：
 
 ```text

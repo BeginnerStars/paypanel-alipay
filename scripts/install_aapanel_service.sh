@@ -53,7 +53,6 @@ fi
 
 replace_env_value APP_HOST "127.0.0.1"
 replace_env_value APP_PORT "$PORT"
-replace_env_value APP_SSL_ENABLED "0"
 if [ -n "$DOMAIN" ]; then
   replace_env_value APP_BASE_URL "https://${DOMAIN}"
   replace_env_value APP_PANEL_DOMAIN "$DOMAIN"

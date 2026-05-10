@@ -111,6 +111,10 @@ def verify(params: dict[str, Any], public_key: str) -> bool:
     return verify_content(canonical(params), str(params["sign"]), public_key)
 
 
+def uses_certificate_params(account: AlipayAccount, method: str) -> bool:
+    return method != "alipay.trade.precreate" and account.pay_types != ("precreate",)
+
+
 def common_params(
     account: AlipayAccount,
     method: str,
@@ -129,10 +133,11 @@ def common_params(
     }
     if extra_params:
         params.update({key: value for key, value in extra_params.items() if value})
-    if account.app_cert_sn:
-        params["app_cert_sn"] = account.app_cert_sn
-    if account.alipay_root_cert_sn:
-        params["alipay_root_cert_sn"] = account.alipay_root_cert_sn
+    if uses_certificate_params(account, method):
+        if account.app_cert_sn:
+            params["app_cert_sn"] = account.app_cert_sn
+        if account.alipay_root_cert_sn:
+            params["alipay_root_cert_sn"] = account.alipay_root_cert_sn
     return params
 
 

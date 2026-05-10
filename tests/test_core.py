@@ -84,9 +84,16 @@ class MainHelperTests(unittest.TestCase):
         self.assertEqual(values["return_url"], "https://pay.example.com/return")
         self.assertEqual(values["page_product_code"], "FAST_INSTANT_TRADE_PAY")
         self.assertEqual(values["wap_product_code"], "CUSTOM_WAP")
-        precreate = account_values({"pay_types": ["precreate"], "return_url": "https://ignore.example.com"})
+        precreate = account_values({
+            "pay_types": ["precreate"],
+            "return_url": "https://ignore.example.com",
+            "app_cert_sn": "APP_CERT",
+            "alipay_root_cert_sn": "ROOT_CERT",
+        })
         self.assertEqual(precreate["pay_types"], "precreate")
         self.assertEqual(precreate["return_url"], "")
+        self.assertEqual(precreate["app_cert_sn"], "")
+        self.assertEqual(precreate["alipay_root_cert_sn"], "")
 
 
 class TimeoutTests(unittest.TestCase):
@@ -263,6 +270,41 @@ class OrderCleanupTests(unittest.TestCase):
             for key in ("APP_DATABASE_PATH", "APP_SECRET_KEY"):
                 os.environ.pop(key, None)
             get_settings.cache_clear()
+
+    def test_precreate_uses_key_mode_without_certificate_params(self) -> None:
+        from app.alipay import AlipayAccount, common_params
+
+        account = AlipayAccount(
+            id=1,
+            app_id="app",
+            gateway="https://openapi.alipay.com/gateway.do",
+            merchant_private_key="private",
+            alipay_public_key="public",
+            app_cert_sn="APP_CERT",
+            alipay_root_cert_sn="ROOT_CERT",
+            pay_types=("precreate",),
+        )
+
+        precreate = common_params(account, "alipay.trade.precreate", {"out_trade_no": "PP1"})
+        self.assertNotIn("app_cert_sn", precreate)
+        self.assertNotIn("alipay_root_cert_sn", precreate)
+        query = common_params(account, "alipay.trade.query", {"out_trade_no": "PP1"})
+        self.assertNotIn("app_cert_sn", query)
+        self.assertNotIn("alipay_root_cert_sn", query)
+
+        page_account = AlipayAccount(
+            id=2,
+            app_id="app",
+            gateway="https://openapi.alipay.com/gateway.do",
+            merchant_private_key="private",
+            alipay_public_key="public",
+            app_cert_sn="APP_CERT",
+            alipay_root_cert_sn="ROOT_CERT",
+            pay_types=("page",),
+        )
+        page = common_params(page_account, "alipay.trade.page.pay", {"out_trade_no": "PP2"})
+        self.assertEqual(page["app_cert_sn"], "APP_CERT")
+        self.assertEqual(page["alipay_root_cert_sn"], "ROOT_CERT")
 
 
 class AlipayCryptoTests(unittest.TestCase):

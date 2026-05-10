@@ -72,9 +72,6 @@ DEFAULT_SETTINGS = {
     "panel_domain": "",
     "enforce_panel_domain": "0",
     "callback_base_url": "",
-    "ssl_enabled": "0",
-    "ssl_certfile": "",
-    "ssl_keyfile": "",
 }
 
 
@@ -99,9 +96,6 @@ def init_db() -> None:
         "panel_domain": runtime_settings.panel_domain,
         "enforce_panel_domain": runtime_settings.enforce_panel_domain,
         "callback_base_url": runtime_settings.callback_base_url,
-        "ssl_enabled": runtime_settings.ssl_enabled,
-        "ssl_certfile": runtime_settings.ssl_certfile,
-        "ssl_keyfile": runtime_settings.ssl_keyfile,
     }
     with connect() as conn:
         conn.executescript(SCHEMA)

@@ -3,7 +3,6 @@ from __future__ import annotations
 import html
 import json
 import mimetypes
-import ssl
 import threading
 import time
 import urllib.parse
@@ -68,7 +67,7 @@ def site_name() -> str:
 def panel_base_url() -> str:
     configured_domain = host_name(panel_settings_value("panel_domain"))
     if configured_domain:
-        scheme = "https" if ssl_is_enabled() or normalize_base_url(get_settings().base_url).startswith("https://") else "http"
+        scheme = "https" if normalize_base_url(get_settings().base_url).startswith("https://") else "http"
         return f"{scheme}://{configured_domain}"
     return normalize_base_url(get_settings().base_url)
 
@@ -77,14 +76,6 @@ def callback_base_url() -> str:
     configured = normalize_base_url(panel_settings_value("callback_base_url"))
     return configured or panel_base_url()
 
-
-def ssl_is_enabled(panel_settings: dict[str, str] | None = None) -> bool:
-    if panel_settings is None:
-        try:
-            panel_settings = settings_map()
-        except Exception:
-            return get_settings().ssl_enabled == "1"
-    return panel_settings.get("ssl_enabled") == "1"
 
 
 def bound_panel_domain(panel_settings: dict[str, str] | None = None) -> str:
@@ -215,8 +206,10 @@ def account_form(action: str, account: Any | None = None) -> str:
       <label>网关<input name="gateway" value="{e(gateway)}" required></label>
       <label>应用私钥（{e(private_help)}）<textarea name="merchant_private_key" rows="5" {key_required}></textarea></label>
       <label>支付宝公钥（{e(public_help)}）<textarea name="alipay_public_key" rows="5" {key_required}></textarea></label>
-      <label>应用公钥证书 SN（证书模式可填）<input name="app_cert_sn" value="{e(app_cert_sn)}"></label>
-      <label>支付宝根证书 SN（证书模式可填）<input name="alipay_root_cert_sn" value="{e(alipay_root_cert_sn)}"></label>
+      <div class="business-field business-wap business-page">
+        <label>应用公钥证书 SN（证书模式可填）<input name="app_cert_sn" value="{e(app_cert_sn)}"></label>
+        <label>支付宝根证书 SN（证书模式可填）<input name="alipay_root_cert_sn" value="{e(alipay_root_cert_sn)}"></label>
+      </div>
       <label>异步通知 URL（留空使用默认）<input name="notify_url" value="{e(notify_url)}" placeholder="{e(default_notify_url())}"></label>
       <div class="business-field business-precreate">
         <label>当面付 product_code（通常留空；如支付宝侧要求可填 FACE_TO_FACE_PAYMENT）<input name="precreate_product_code" value="{e(precreate_product_code)}"></label>
@@ -259,8 +252,8 @@ def account_values(data: dict[str, Any]) -> dict[str, str]:
         "precreate_product_code": data.get("precreate_product_code", "").strip() if pay_type == "precreate" else "",
         "page_product_code": (data.get("page_product_code", "").strip() or DEFAULT_PRODUCT_CODES["page"]) if pay_type == "page" else DEFAULT_PRODUCT_CODES["page"],
         "wap_product_code": (data.get("wap_product_code", "").strip() or DEFAULT_PRODUCT_CODES["wap"]) if pay_type == "wap" else DEFAULT_PRODUCT_CODES["wap"],
-        "app_cert_sn": data.get("app_cert_sn", "").strip(),
-        "alipay_root_cert_sn": data.get("alipay_root_cert_sn", "").strip(),
+        "app_cert_sn": data.get("app_cert_sn", "").strip() if pay_type in {"wap", "page"} else "",
+        "alipay_root_cert_sn": data.get("alipay_root_cert_sn", "").strip() if pay_type in {"wap", "page"} else "",
         "notify_url": data.get("notify_url", "").strip(),
         "return_url": data.get("return_url", "").strip() if pay_type in {"wap", "page"} else "",
     }
@@ -284,7 +277,7 @@ def session_cookie(name: str, value: str, max_age: int | None = None) -> str:
     parts = [f"{name}={value}", "Path=/", "HttpOnly", "SameSite=Lax"]
     if max_age is not None:
         parts.insert(2, f"Max-Age={max_age}")
-    if panel_base_url().startswith("https://") or ssl_is_enabled():
+    if panel_base_url().startswith("https://"):
         parts.append("Secure")
     return "; ".join(parts)
 
@@ -446,6 +439,8 @@ def query_order(order_id: int) -> None:
     if not account_row:
         return
     account = row_to_account(account_row)
+    if order["pay_type"] == "precreate":
+        account.pay_types = ("precreate",)
     try:
         response = alipay.request_api(account, "alipay.trade.query", {"out_trade_no": order["out_trade_no"]})
         update_order_status(order_id, response)
@@ -907,9 +902,6 @@ class Handler(BaseHTTPRequestHandler):
           <label>绑定访问域名（如 pay.example.com）<input name="panel_domain" value="{e(panel.get('panel_domain', ''))}" placeholder="pay.example.com"></label>
           <label class="checkbox"><input type="checkbox" name="enforce_panel_domain" value="1" {'checked' if panel.get('enforce_panel_domain') == '1' else ''}> 仅允许绑定域名访问面板</label>
           <label>自定义回调域名/地址（留空使用 APP_BASE_URL）<input name="callback_base_url" value="{e(panel.get('callback_base_url', ''))}" placeholder="https://notify.example.com"></label>
-          <label class="checkbox"><input type="checkbox" name="ssl_enabled" value="1" {'checked' if panel.get('ssl_enabled') == '1' else ''}> 启用内置 HTTPS（保存后重启生效）</label>
-          <label>SSL 证书文件路径<input name="ssl_certfile" value="{e(panel.get('ssl_certfile', ''))}" placeholder="/app/certs/fullchain.pem"></label>
-          <label>SSL 私钥文件路径<input name="ssl_keyfile" value="{e(panel.get('ssl_keyfile', ''))}" placeholder="/app/certs/privkey.pem"></label>
           <label class="checkbox"><input type="checkbox" name="enable_account_rotation" value="1" {'checked' if panel.get('enable_account_rotation') == '1' else ''}> 开启多账户轮询/失败切换</label>
           <label class="checkbox"><input type="checkbox" name="enable_polling" value="1" {'checked' if panel.get('enable_polling') == '1' else ''}> 开启订单状态自动轮询</label>
           <label>轮询间隔（秒）<input name="poll_interval_seconds" type="number" min="3" value="{e(panel.get('poll_interval_seconds', '8'))}"></label>
@@ -928,9 +920,6 @@ class Handler(BaseHTTPRequestHandler):
             "panel_domain": host_name(data.get("panel_domain", "")),
             "enforce_panel_domain": "1" if data.get("enforce_panel_domain") == "1" else "0",
             "callback_base_url": normalize_base_url(data.get("callback_base_url", "")),
-            "ssl_enabled": "1" if data.get("ssl_enabled") == "1" else "0",
-            "ssl_certfile": data.get("ssl_certfile", "").strip(),
-            "ssl_keyfile": data.get("ssl_keyfile", "").strip(),
             "enable_account_rotation": "1" if data.get("enable_account_rotation") == "1" else "0",
             "enable_polling": "1" if data.get("enable_polling") == "1" else "0",
             "poll_interval_seconds": str(bounded_int(data.get("poll_interval_seconds"), 8, 3)),
@@ -958,18 +947,7 @@ def run(host: str | None = None, port: int | None = None) -> None:
     port = port or settings.port
     threading.Thread(target=polling_worker, daemon=True).start()
     server = ThreadingHTTPServer((host, port), Handler)
-    panel_settings = settings_map()
-    scheme = "http"
-    if ssl_is_enabled(panel_settings):
-        certfile = panel_settings.get("ssl_certfile", "").strip()
-        keyfile = panel_settings.get("ssl_keyfile", "").strip()
-        if not certfile or not keyfile:
-            raise RuntimeError("已启用内置 HTTPS，但未配置 SSL 证书或私钥路径")
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(certfile=certfile, keyfile=keyfile)
-        server.socket = context.wrap_socket(server.socket, server_side=True)
-        scheme = "https"
-    print(f"PayPanel Alipay listening on {scheme}://{host}:{port}")
+    print(f"PayPanel Alipay listening on http://{host}:{port}")
     server.serve_forever()
 
 
