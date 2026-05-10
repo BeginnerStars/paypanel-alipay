@@ -26,6 +26,10 @@ class AlipayAccount:
     alipay_root_cert_sn: str = ""
     notify_url: str = ""
     return_url: str = ""
+    pay_types: tuple[str, ...] = ("precreate", "page", "wap")
+    precreate_product_code: str = ""
+    page_product_code: str = "FAST_INSTANT_TRADE_PAY"
+    wap_product_code: str = "QUICK_WAP_WAY"
 
 
 def _normalize_key(key: str, kind: str) -> str:

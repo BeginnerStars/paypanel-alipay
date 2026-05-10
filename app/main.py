@@ -93,6 +93,37 @@ def bound_panel_domain(panel_settings: dict[str, str] | None = None) -> str:
 
 
 
+PAY_TYPE_LABELS = {
+    "precreate": "当面付",
+    "wap": "手机网站支付",
+    "page": "电脑网站支付",
+}
+PAY_TYPE_ORDER = ("precreate", "wap", "page")
+DEFAULT_PRODUCT_CODES = {
+    "precreate": "",
+    "page": "FAST_INSTANT_TRADE_PAY",
+    "wap": "QUICK_WAP_WAY",
+}
+
+
+def normalize_pay_types(value: str | list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    if isinstance(value, str):
+        raw = value.split(",")
+    else:
+        raw = list(value or [])
+    selected = [item.strip() for item in raw if item.strip() in PAY_TYPE_LABELS]
+    unique = [item for item in PAY_TYPE_ORDER if item in selected]
+    return tuple(unique or PAY_TYPE_ORDER)
+
+
+def account_supports(account: Any, pay_type: str) -> bool:
+    return pay_type in normalize_pay_types(account["pay_types"])
+
+
+def pay_type_labels(value: str | list[str] | tuple[str, ...] | None) -> str:
+    return "、".join(PAY_TYPE_LABELS[item] for item in normalize_pay_types(value))
+
+
 def row_to_account(row: Any) -> AlipayAccount:
     return AlipayAccount(
         id=row["id"],
@@ -104,6 +135,10 @@ def row_to_account(row: Any) -> AlipayAccount:
         alipay_root_cert_sn=row["alipay_root_cert_sn"] or "",
         notify_url=row["notify_url"] or default_notify_url(),
         return_url=row["return_url"] or panel_base_url(),
+        pay_types=normalize_pay_types(row["pay_types"]),
+        precreate_product_code=row["precreate_product_code"] or "",
+        page_product_code=row["page_product_code"] or DEFAULT_PRODUCT_CODES["page"],
+        wap_product_code=row["wap_product_code"] or DEFAULT_PRODUCT_CODES["wap"],
     )
 
 
@@ -127,6 +162,68 @@ def e(value: Any) -> str:
 
 def qr_img_src(text: str) -> str:
     return "https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=" + urllib.parse.quote(text)
+
+
+def pay_type_options(selected: str = "precreate") -> str:
+    return "".join(
+        f'<option value="{e(key)}" {"selected" if selected == key else ""}>{e(label)}</option>'
+        for key, label in PAY_TYPE_LABELS.items()
+    )
+
+
+def account_form(action: str, account: Any | None = None) -> str:
+    is_edit = account is not None
+    selected = normalize_pay_types(account["pay_types"] if is_edit else PAY_TYPE_ORDER)
+    checked = {item: "checked" if item in selected else "" for item in PAY_TYPE_ORDER}
+    key_required = "" if is_edit else "required"
+    private_help = "留空表示不修改已保存的应用私钥" if is_edit else "PKCS8 PEM 或 Base64"
+    public_help = "留空表示不修改已保存的支付宝公钥" if is_edit else "PEM 或 Base64"
+    button = "保存修改" if is_edit else "保存账户"
+    name = account["name"] if is_edit else ""
+    app_id = account["app_id"] if is_edit else ""
+    gateway = account["gateway"] if is_edit else "https://openapi.alipay.com/gateway.do"
+    app_cert_sn = account["app_cert_sn"] if is_edit else ""
+    alipay_root_cert_sn = account["alipay_root_cert_sn"] if is_edit else ""
+    notify_url = account["notify_url"] if is_edit else ""
+    return_url = account["return_url"] if is_edit else ""
+    precreate_product_code = account["precreate_product_code"] if is_edit else DEFAULT_PRODUCT_CODES["precreate"]
+    page_product_code = account["page_product_code"] if is_edit else DEFAULT_PRODUCT_CODES["page"]
+    wap_product_code = account["wap_product_code"] if is_edit else DEFAULT_PRODUCT_CODES["wap"]
+    return f"""
+    <form class="card form" method="post" action="{e(action)}">
+      <label>名称<input name="name" value="{e(name)}" required></label><label>App ID<input name="app_id" value="{e(app_id)}" required></label>
+      <label>网关<input name="gateway" value="{e(gateway)}" required></label>
+      <fieldset><legend>开通/签约的支付产品</legend>
+        <label class="checkbox"><input type="checkbox" name="pay_types" value="precreate" {checked['precreate']}> 当面付（alipay.trade.precreate）</label>
+        <label class="checkbox"><input type="checkbox" name="pay_types" value="wap" {checked['wap']}> 手机网站支付（alipay.trade.wap.pay）</label>
+        <label class="checkbox"><input type="checkbox" name="pay_types" value="page" {checked['page']}> 电脑网站支付（alipay.trade.page.pay）</label>
+      </fieldset>
+      <label>当面付 product_code（通常可留空；如支付宝要求可填 FACE_TO_FACE_PAYMENT）<input name="precreate_product_code" value="{e(precreate_product_code)}"></label>
+      <label>手机网站支付 product_code<input name="wap_product_code" value="{e(wap_product_code)}" placeholder="QUICK_WAP_WAY"></label>
+      <label>电脑网站支付 product_code<input name="page_product_code" value="{e(page_product_code)}" placeholder="FAST_INSTANT_TRADE_PAY"></label>
+      <label>应用私钥（{e(private_help)}）<textarea name="merchant_private_key" rows="5" {key_required}></textarea></label>
+      <label>支付宝公钥（{e(public_help)}）<textarea name="alipay_public_key" rows="5" {key_required}></textarea></label>
+      <label>应用公钥证书 SN（证书模式可填）<input name="app_cert_sn" value="{e(app_cert_sn)}"></label><label>支付宝根证书 SN（证书模式可填）<input name="alipay_root_cert_sn" value="{e(alipay_root_cert_sn)}"></label>
+      <label>异步通知 URL（留空使用默认）<input name="notify_url" value="{e(notify_url)}" placeholder="{e(default_notify_url())}"></label><label>同步返回 URL<input name="return_url" value="{e(return_url)}"></label>
+      <button class="primary">{button}</button></form>
+    """
+
+
+def account_values(data: dict[str, Any]) -> dict[str, str]:
+    pay_types = normalize_pay_types(data.get("pay_types", []))
+    return {
+        "name": data.get("name", "").strip(),
+        "app_id": data.get("app_id", "").strip(),
+        "gateway": data.get("gateway", "https://openapi.alipay.com/gateway.do").strip() or "https://openapi.alipay.com/gateway.do",
+        "pay_types": ",".join(pay_types),
+        "precreate_product_code": data.get("precreate_product_code", "").strip(),
+        "page_product_code": data.get("page_product_code", "").strip() or DEFAULT_PRODUCT_CODES["page"],
+        "wap_product_code": data.get("wap_product_code", "").strip() or DEFAULT_PRODUCT_CODES["wap"],
+        "app_cert_sn": data.get("app_cert_sn", "").strip(),
+        "alipay_root_cert_sn": data.get("alipay_root_cert_sn", "").strip(),
+        "notify_url": data.get("notify_url", "").strip(),
+        "return_url": data.get("return_url", "").strip(),
+    }
 
 
 def bounded_int(value: Any, default: int, minimum: int, maximum: int = 525_600) -> int:
@@ -162,9 +259,10 @@ def page(title: str, body: str, logged_in: bool = True) -> bytes:
           <form action="/logout" method="post"><button>退出</button></form>
         </nav></header>
         """
+    main_class = "container" if logged_in else "login-page"
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1"><title>{e(title)}</title>
-    <link rel="stylesheet" href="/static/style.css"></head><body>{nav}<main class="container">{body}</main></body></html>""".encode()
+    <link rel="stylesheet" href="/static/style.css"></head><body>{nav}<main class="{main_class}">{body}</main></body></html>""".encode()
 
 
 def status_badge(status: str) -> str:
@@ -177,7 +275,7 @@ def orders_table(rows: list[Any]) -> str:
         body.append(
             "<tr>"
             f"<td><code>{e(order['out_trade_no'])}</code></td><td>{e(order['subject'])}</td>"
-            f"<td>¥{e(order['amount'])}</td><td>{e(order['pay_type'])}</td>"
+            f"<td>¥{e(order['amount'])}</td><td>{e(PAY_TYPE_LABELS.get(order['pay_type'], order['pay_type']))}</td>"
             f"<td>{status_badge(order['status'])}</td><td>{e(order['created_at'])}</td>"
             f"<td><a href=\"/orders/{int(order['id'])}\">详情</a></td></tr>"
         )
@@ -189,13 +287,13 @@ def orders_table(rows: list[Any]) -> str:
     """.format("".join(body))
 
 
-def next_accounts(preferred_id: int | None = None) -> list[Any]:
+def next_accounts(preferred_id: int | None = None, pay_type: str = "precreate") -> list[Any]:
     if preferred_id:
         row = one("SELECT * FROM accounts WHERE id = ? AND enabled = 1", (preferred_id,))
-        return [row] if row else []
+        return [row] if row and account_supports(row, pay_type) else []
     panel_settings = settings_map()
     order_sql = "failure_count ASC, updated_at ASC" if panel_settings.get("enable_account_rotation") == "1" else "id ASC"
-    return all_rows(f"SELECT * FROM accounts WHERE enabled = 1 ORDER BY {order_sql}")
+    return [row for row in all_rows(f"SELECT * FROM accounts WHERE enabled = 1 ORDER BY {order_sql}") if account_supports(row, pay_type)]
 
 
 def update_order_status(order_id: int, response: dict[str, Any], raw: str = "") -> None:
@@ -254,9 +352,9 @@ def build_payment(order_id: int, preferred_account_id: int | None = None) -> Non
     order = one("SELECT * FROM orders WHERE id = ?", (order_id,))
     if not order:
         raise RuntimeError("订单不存在")
-    accounts = next_accounts(preferred_account_id)
+    accounts = next_accounts(preferred_account_id, order["pay_type"])
     if not accounts:
-        raise RuntimeError("没有可用的支付宝账户")
+        raise RuntimeError(f"没有支持{PAY_TYPE_LABELS.get(order['pay_type'], order['pay_type'])}的可用支付宝账户")
     last_error = ""
     for account_row in accounts:
         account = row_to_account(account_row)
@@ -269,13 +367,15 @@ def build_payment(order_id: int, preferred_account_id: int | None = None) -> Non
             apply_order_timeout_biz_content(biz_content)
             pay_type = order["pay_type"]
             if pay_type == "precreate":
+                if account.precreate_product_code:
+                    biz_content["product_code"] = account.precreate_product_code
                 response = alipay.request_api(account, "alipay.trade.precreate", biz_content)
                 qr_code = response.get("qr_code", "")
                 pay_url = qr_code
                 raw_response = json.dumps(response, ensure_ascii=False)
             else:
                 method = "alipay.trade.page.pay" if pay_type == "page" else "alipay.trade.wap.pay"
-                biz_content["product_code"] = "FAST_INSTANT_TRADE_PAY" if pay_type == "page" else "QUICK_WAP_WAY"
+                biz_content["product_code"] = account.page_product_code if pay_type == "page" else account.wap_product_code
                 if pay_type == "wap":
                     biz_content["quit_url"] = panel_base_url()
                 pay_url = f"{panel_base_url()}/orders/{order_id}/pay"
@@ -356,11 +456,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def form(self) -> dict[str, str]:
+    def form(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0") or 0)
         raw = self.rfile.read(length).decode()
         parsed = urllib.parse.parse_qs(raw, keep_blank_values=True)
-        return {key: values[-1] if values else "" for key, values in parsed.items()}
+        return {key: values if key == "pay_types" else (values[-1] if values else "") for key, values in parsed.items()}
 
     def username(self) -> str | None:
         return read_session_cookie(self.headers.get("Cookie"))
@@ -417,6 +517,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.order_detail(order_id) if order_id is not None else self.not_found()
         if path == "/accounts":
             return self.accounts()
+        if path.startswith("/accounts/") and path.endswith("/edit"):
+            account_id = path_int(path.split("/")[2])
+            return self.edit_account(account_id) if account_id is not None else self.not_found()
         if path == "/settings":
             return self.settings_page()
         self.not_found()
@@ -443,6 +546,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.query_order_action(order_id) if order_id is not None else self.not_found()
         if path == "/accounts":
             return self.save_account()
+        if path.startswith("/accounts/") and path.endswith("/update"):
+            account_id = path_int(path.split("/")[2])
+            return self.update_account(account_id) if account_id is not None else self.not_found()
+        if path.startswith("/accounts/") and path.endswith("/delete"):
+            account_id = path_int(path.split("/")[2])
+            return self.delete_account(account_id) if account_id is not None else self.not_found()
         if path.startswith("/accounts/") and path.endswith("/toggle"):
             account_id = path_int(path.split("/")[2])
             return self.toggle_account(account_id) if account_id is not None else self.not_found()
@@ -557,15 +666,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
     def new_order(self) -> None:
-        accounts = all_rows("SELECT id, name FROM accounts WHERE enabled = 1 ORDER BY name")
+        accounts = all_rows("SELECT id, name, pay_types FROM accounts WHERE enabled = 1 ORDER BY name")
         account_options = '<option value="0">自动选择 / 失败切换</option>' + "".join(
-            f'<option value="{int(account["id"])}">{e(account["name"])}</option>' for account in accounts
+            f'<option value="{int(account["id"])}">{e(account["name"])}（{e(pay_type_labels(account["pay_types"]))}）</option>' for account in accounts
         )
         body = f"""
         <h1>发起收款</h1><form class="card form" method="post" action="/orders">
           <label>金额（元）<input name="amount" inputmode="decimal" placeholder="99.00" required></label>
           <label>商品/备注标题<input name="subject" value="支付宝收款" required></label>
-          <label>支付方式<select name="pay_type"><option value="precreate">当面付 / 预创建二维码</option><option value="page">电脑网站支付</option><option value="wap">手机网站支付</option></select></label>
+          <label>支付方式<select name="pay_type">{pay_type_options()}</select></label>
           <label>指定账户（可选）<select name="account_id">{account_options}</select></label>
           <button class="primary">生成收款二维码</button></form>
         """
@@ -603,7 +712,7 @@ class Handler(BaseHTTPRequestHandler):
         body = f"""
         <h1>订单详情</h1><section class="grid-2"><div class="card"><dl>
           <dt>商户订单号</dt><dd><code>{e(order['out_trade_no'])}</code></dd><dt>支付宝交易号</dt><dd>{e(order['trade_no'] or '-')}</dd>
-          <dt>金额</dt><dd>¥{e(order['amount'])}</dd><dt>标题</dt><dd>{e(order['subject'])}</dd><dt>支付方式</dt><dd>{e(order['pay_type'])}</dd>
+          <dt>金额</dt><dd>¥{e(order['amount'])}</dd><dt>标题</dt><dd>{e(order['subject'])}</dd><dt>支付方式</dt><dd>{e(PAY_TYPE_LABELS.get(order['pay_type'], order['pay_type']))}</dd>
           <dt>账户</dt><dd>{e(order['account_name'] or '-')}</dd><dt>状态</dt><dd>{status_badge(order['status'])}</dd><dt>创建时间</dt><dd>{e(order['created_at'])}</dd>
           <dt>支付时间</dt><dd>{e(order['paid_at'] or '-')}</dd><dt>错误</dt><dd class="error">{e(order['last_error'] or '-')}</dd></dl>
           <form method="post" action="/orders/{order_id}/query"><button>立即查询状态</button></form></div><div class="card qr-card">{qr}</div></section>
@@ -625,7 +734,7 @@ class Handler(BaseHTTPRequestHandler):
         method = "alipay.trade.page.pay" if order["pay_type"] == "page" else "alipay.trade.wap.pay"
         biz_content = {"out_trade_no": order["out_trade_no"], "total_amount": order["amount"], "subject": order["subject"]}
         apply_order_timeout_biz_content(biz_content)
-        biz_content["product_code"] = "FAST_INSTANT_TRADE_PAY" if order["pay_type"] == "page" else "QUICK_WAP_WAY"
+        biz_content["product_code"] = account.page_product_code if order["pay_type"] == "page" else account.wap_product_code
         if order["pay_type"] == "wap":
             biz_content["quit_url"] = panel_base_url()
         self.send_bytes(alipay.build_page_form(account, method, biz_content).encode())
@@ -644,52 +753,110 @@ class Handler(BaseHTTPRequestHandler):
         rows = all_rows("SELECT * FROM accounts ORDER BY enabled DESC, name")
         table_rows = []
         for account in rows:
+            business = pay_type_labels(account["pay_types"])
             table_rows.append(
-                f"<tr><td>{e(account['name'])}</td><td>{e(account['app_id'])}</td><td>{'启用' if account['enabled'] else '停用'}</td>"
+                f"<tr><td>{e(account['name'])}</td><td>{e(account['app_id'])}</td><td>{e(business)}</td><td>{'启用' if account['enabled'] else '停用'}</td>"
                 f"<td>{int(account['failure_count'])}</td><td>{e(account['last_error'])}</td>"
-                f"<td><form method=\"post\" action=\"/accounts/{int(account['id'])}/toggle\"><button>{'停用' if account['enabled'] else '启用'}</button></form></td></tr>"
+                f"<td class=\"row-actions\"><a class=\"button\" href=\"/accounts/{int(account['id'])}/edit\">修改</a>"
+                f"<form method=\"post\" action=\"/accounts/{int(account['id'])}/toggle\"><button>{'停用' if account['enabled'] else '启用'}</button></form>"
+                f"<form method=\"post\" action=\"/accounts/{int(account['id'])}/delete\" onsubmit=\"return confirm('确认删除该账户？历史订单仍会保留。')\"><button class=\"danger\">删除</button></form></td></tr>"
             )
         if not table_rows:
-            table_rows.append('<tr><td colspan="6" class="muted">暂无账户</td></tr>')
+            table_rows.append('<tr><td colspan="7" class="muted">暂无账户</td></tr>')
         body = f"""
         <h1>支付宝账户</h1><p class="muted">默认异步通知地址：<code>{e(default_notify_url())}</code></p>
-        <table><thead><tr><th>名称</th><th>App ID</th><th>状态</th><th>失败次数</th><th>最近错误</th><th></th></tr></thead><tbody>{''.join(table_rows)}</tbody></table>
-        <h2>新增账户</h2><form class="card form" method="post" action="/accounts">
-          <label>名称<input name="name" required></label><label>App ID<input name="app_id" required></label>
-          <label>网关<input name="gateway" value="https://openapi.alipay.com/gateway.do" required></label>
-          <label>应用私钥（PKCS8 PEM 或 Base64）<textarea name="merchant_private_key" rows="5" required></textarea></label>
-          <label>支付宝公钥（PEM 或 Base64）<textarea name="alipay_public_key" rows="5" required></textarea></label>
-          <label>应用公钥证书 SN（证书模式可填）<input name="app_cert_sn"></label><label>支付宝根证书 SN（证书模式可填）<input name="alipay_root_cert_sn"></label>
-          <label>异步通知 URL（留空使用默认）<input name="notify_url" placeholder="{e(default_notify_url())}"></label><label>同步返回 URL<input name="return_url"></label>
-          <button class="primary">保存账户</button></form>
+        <table><thead><tr><th>名称</th><th>App ID</th><th>支付产品</th><th>状态</th><th>失败次数</th><th>最近错误</th><th></th></tr></thead><tbody>{''.join(table_rows)}</tbody></table>
+        <h2>新增账户</h2>
+        <p class="muted">请只勾选该支付宝应用已签约/开通的产品。电脑网站支付默认使用 FAST_INSTANT_TRADE_PAY；手机网站支付默认使用 QUICK_WAP_WAY；当面付预创建通常无需 product_code，若支付宝侧要求可填写对应产品码。</p>
+        {account_form('/accounts')}
         """
         self.send_bytes(page("账户", body))
 
+    def edit_account(self, account_id: int) -> None:
+        account = one("SELECT * FROM accounts WHERE id = ?", (account_id,))
+        if not account:
+            return self.not_found()
+        body = f"""
+        <h1>修改支付宝账户</h1><p><a href="/accounts">返回账户列表</a></p>
+        {account_form(f'/accounts/{account_id}/update', account)}
+        """
+        self.send_bytes(page("修改账户", body))
+
     def save_account(self) -> None:
         data = self.form()
+        values = account_values(data)
         execute(
             """
             INSERT INTO accounts(name, app_id, gateway, merchant_private_key, alipay_public_key,
-                                 app_cert_sn, alipay_root_cert_sn, notify_url, return_url)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 app_cert_sn, alipay_root_cert_sn, notify_url, return_url,
+                                 pay_types, precreate_product_code, page_product_code, wap_product_code)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                data.get("name", ""),
-                data.get("app_id", ""),
-                data.get("gateway", "https://openapi.alipay.com/gateway.do"),
+                values["name"],
+                values["app_id"],
+                values["gateway"],
                 encrypt_secret(data.get("merchant_private_key", "")),
                 encrypt_secret(data.get("alipay_public_key", "")),
-                data.get("app_cert_sn", ""),
-                data.get("alipay_root_cert_sn", ""),
-                data.get("notify_url", ""),
-                data.get("return_url", ""),
+                values["app_cert_sn"],
+                values["alipay_root_cert_sn"],
+                values["notify_url"],
+                values["return_url"],
+                values["pay_types"],
+                values["precreate_product_code"],
+                values["page_product_code"],
+                values["wap_product_code"],
             ),
         )
+        self.redirect("/accounts")
+
+    def update_account(self, account_id: int) -> None:
+        if not one("SELECT id FROM accounts WHERE id = ?", (account_id,)):
+            return self.not_found()
+        data = self.form()
+        values = account_values(data)
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE accounts
+                SET name = ?, app_id = ?, gateway = ?, app_cert_sn = ?, alipay_root_cert_sn = ?,
+                    notify_url = ?, return_url = ?, pay_types = ?, precreate_product_code = ?,
+                    page_product_code = ?, wap_product_code = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    values["name"],
+                    values["app_id"],
+                    values["gateway"],
+                    values["app_cert_sn"],
+                    values["alipay_root_cert_sn"],
+                    values["notify_url"],
+                    values["return_url"],
+                    values["pay_types"],
+                    values["precreate_product_code"],
+                    values["page_product_code"],
+                    values["wap_product_code"],
+                    account_id,
+                ),
+            )
+            private_key = data.get("merchant_private_key", "").strip()
+            public_key = data.get("alipay_public_key", "").strip()
+            if private_key:
+                conn.execute("UPDATE accounts SET merchant_private_key = ? WHERE id = ?", (encrypt_secret(private_key), account_id))
+            if public_key:
+                conn.execute("UPDATE accounts SET alipay_public_key = ? WHERE id = ?", (encrypt_secret(public_key), account_id))
+        self.redirect("/accounts")
+
+    def delete_account(self, account_id: int) -> None:
+        with connect() as conn:
+            conn.execute("UPDATE orders SET account_id = NULL WHERE account_id = ?", (account_id,))
+            conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
         self.redirect("/accounts")
 
     def toggle_account(self, account_id: int) -> None:
         execute("UPDATE accounts SET enabled = CASE enabled WHEN 1 THEN 0 ELSE 1 END WHERE id = ?", (account_id,))
         self.redirect("/accounts")
+
 
     def settings_page(self) -> None:
         panel = settings_map()

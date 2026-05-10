@@ -52,6 +52,24 @@ class MainHelperTests(unittest.TestCase):
             get_settings.cache_clear()
 
 
+    def test_login_page_uses_centering_wrapper(self) -> None:
+        from app.main import page
+
+        html = page("登录", "<form></form>", logged_in=False).decode()
+        self.assertIn('main class="login-page"', html)
+        self.assertNotIn('class="container"', html)
+
+    def test_account_pay_type_helpers_preserve_product_codes(self) -> None:
+        from app.main import account_values, normalize_pay_types, pay_type_labels
+
+        self.assertEqual(normalize_pay_types("wap,page"), ("wap", "page"))
+        self.assertEqual(pay_type_labels("precreate,wap"), "当面付、手机网站支付")
+        values = account_values({"pay_types": ["wap"], "page_product_code": "", "wap_product_code": "CUSTOM_WAP"})
+        self.assertEqual(values["pay_types"], "wap")
+        self.assertEqual(values["page_product_code"], "FAST_INSTANT_TRADE_PAY")
+        self.assertEqual(values["wap_product_code"], "CUSTOM_WAP")
+
+
 class TimeoutTests(unittest.TestCase):
     def test_expire_timeout_orders_closes_stale_pending_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -139,6 +157,49 @@ class SecretStorageTests(unittest.TestCase):
             self.assertTrue(row["alipay_public_key"].startswith("enc:v1:"))
             self.assertEqual(decrypt_secret(row["merchant_private_key"]), "legacy-private")
             self.assertEqual(decrypt_secret(row["alipay_public_key"]), "legacy-public")
+
+            for key in ("APP_DATABASE_PATH", "APP_SECRET_KEY"):
+                os.environ.pop(key, None)
+            get_settings.cache_clear()
+
+
+    def test_account_business_columns_are_added_to_legacy_database(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["APP_DATABASE_PATH"] = str(Path(tmp) / "paypanel.db")
+            os.environ["APP_SECRET_KEY"] = "migration-secret"
+            from app.config import get_settings
+            from app.db import connect, init_db, one
+
+            get_settings.cache_clear()
+            with connect() as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE accounts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        app_id TEXT NOT NULL,
+                        gateway TEXT NOT NULL DEFAULT 'https://openapi.alipay.com/gateway.do',
+                        merchant_private_key TEXT NOT NULL,
+                        alipay_public_key TEXT NOT NULL,
+                        app_cert_sn TEXT DEFAULT '',
+                        alipay_root_cert_sn TEXT DEFAULT '',
+                        notify_url TEXT DEFAULT '',
+                        return_url TEXT DEFAULT '',
+                        enabled INTEGER NOT NULL DEFAULT 1,
+                        failure_count INTEGER NOT NULL DEFAULT 0,
+                        last_error TEXT DEFAULT '',
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                    INSERT INTO accounts(name, app_id, merchant_private_key, alipay_public_key)
+                    VALUES('legacy', 'app', 'private', 'public');
+                    """
+                )
+            init_db()
+            row = one("SELECT pay_types, page_product_code, wap_product_code FROM accounts WHERE name = ?", ("legacy",))
+            self.assertEqual(row["pay_types"], "precreate,page,wap")
+            self.assertEqual(row["page_product_code"], "FAST_INSTANT_TRADE_PAY")
+            self.assertEqual(row["wap_product_code"], "QUICK_WAP_WAY")
 
             for key in ("APP_DATABASE_PATH", "APP_SECRET_KEY"):
                 os.environ.pop(key, None)

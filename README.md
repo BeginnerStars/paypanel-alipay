@@ -102,6 +102,8 @@ docker compose up -d --build
 
 - 服务端接口（当面付预创建、交易查询）使用 `POST` 提交到网关。
 - 电脑网站支付与手机网站支付使用自动提交的 `POST` HTML 表单跳转支付宝收银台。
+- 账户页可按支付宝应用实际签约情况勾选“当面付 / 手机网站支付 / 电脑网站支付”；发起订单时只会使用支持对应支付方式的账户。
+- 电脑网站支付默认传 `product_code=FAST_INSTANT_TRADE_PAY`，手机网站支付默认传 `product_code=QUICK_WAP_WAY`；当面付预创建默认不传 `product_code`，如支付宝侧要求可在账户中单独配置。
 - 异步通知地址由公共参数 `notify_url` 传入，通知到达后会先验签，再返回 `success`。
 - 支付宝 OpenAPI JSON 响应如果包含 `sign`，会按 `xxx_response` 节点原始 JSON 值进行验签。
 

@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS accounts (
     alipay_root_cert_sn TEXT DEFAULT '',
     notify_url TEXT DEFAULT '',
     return_url TEXT DEFAULT '',
+    pay_types TEXT NOT NULL DEFAULT 'precreate,page,wap',
+    precreate_product_code TEXT DEFAULT '',
+    page_product_code TEXT DEFAULT 'FAST_INSTANT_TRADE_PAY',
+    wap_product_code TEXT DEFAULT 'QUICK_WAP_WAY',
     enabled INTEGER NOT NULL DEFAULT 1,
     failure_count INTEGER NOT NULL DEFAULT 0,
     last_error TEXT DEFAULT '',
@@ -104,12 +108,29 @@ def init_db() -> None:
                 "INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)",
                 (key, value),
             )
+        ensure_columns(
+            conn,
+            "accounts",
+            {
+                "pay_types": "TEXT NOT NULL DEFAULT 'precreate,page,wap'",
+                "precreate_product_code": "TEXT DEFAULT ''",
+                "page_product_code": "TEXT DEFAULT 'FAST_INSTANT_TRADE_PAY'",
+                "wap_product_code": "TEXT DEFAULT 'QUICK_WAP_WAY'",
+            },
+        )
         rows = conn.execute("SELECT id, merchant_private_key, alipay_public_key FROM accounts").fetchall()
         for row in rows:
             conn.execute(
                 "UPDATE accounts SET merchant_private_key = ?, alipay_public_key = ? WHERE id = ?",
                 (encrypt_secret(row["merchant_private_key"]), encrypt_secret(row["alipay_public_key"]), row["id"]),
             )
+
+
+def ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for name, definition in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
 
 def one(query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
