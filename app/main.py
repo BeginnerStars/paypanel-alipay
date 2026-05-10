@@ -213,6 +213,10 @@ def business_inputs(account: Any | None, business: str, is_edit: bool) -> str:
     public_required = "required"
     merchant_private_key = business_value(account, business, "merchant_private_key", "merchant_private_key") if is_edit else ""
     alipay_public_key = business_value(account, business, "alipay_public_key", "alipay_public_key") if is_edit else ""
+    alipay_public_key_help = "留空表示不修改已保存的支付宝公钥" if is_edit else "PEM 或 Base64"
+    private_help = "留空表示不修改已保存的应用私钥" if is_edit else "PKCS8 PEM 或 Base64"
+    private_required = "" if is_edit else "required"
+    public_required = "" if is_edit else "required"
     notify_url = business_value(account, business, "notify_url", "notify_url") if is_edit else ""
     product_code = account[f"{business}_product_code"] if is_edit and f"{business}_product_code" in account.keys() else DEFAULT_PRODUCT_CODES[business]
     cert_fields = ""
@@ -232,6 +236,8 @@ def business_inputs(account: Any | None, business: str, is_edit: bool) -> str:
         <label>应用公钥<textarea name="{prefix}app_public_key" rows="4" required>{e(app_public_key)}</textarea></label>
         <label>应用私钥（{e(private_help)}）<textarea name="{prefix}merchant_private_key" rows="5" {private_required}>{e(merchant_private_key)}</textarea></label>
         <label>支付宝公钥（{e(alipay_public_key_help)}）<textarea name="{prefix}alipay_public_key" rows="5" {public_required}>{e(alipay_public_key)}</textarea></label>
+        <label>应用私钥（{e(private_help)}）<textarea name="{prefix}merchant_private_key" rows="5" {private_required}></textarea></label>
+        <label>支付宝公钥（{e(alipay_public_key_help)}）<textarea name="{prefix}alipay_public_key" rows="5" {public_required}></textarea></label>
         <label>网关<input name="{prefix}gateway" value="{e(gateway)}" required></label>
         <label>异步通知 URL（留空使用默认）<input name="{prefix}notify_url" value="{e(notify_url)}" placeholder="{e(default_notify_url())}"></label>
         {return_field}
@@ -341,6 +347,7 @@ def page(title: str, body: str, logged_in: bool = True) -> bytes:
         nav = f"""
         <header class="topbar"><a class="brand" href="/">{e(site_name())}</a><nav>
           <a href="/orders/new">发起收款</a><a href="/orders">订单</a><a href="/accounts">账户</a><a href="/logs">日志</a><a href="/settings">设置</a>
+          <a href="/orders/new">发起收款</a><a href="/orders">订单</a><a href="/accounts">账户</a><a href="/settings">设置</a>
           <form action="/logout" method="post"><button>退出</button></form>
         </nav></header>
         """
@@ -691,6 +698,7 @@ class Handler(BaseHTTPRequestHandler):
             self.audit("auth.login.failed", data.get("username", ""), "WARN")
             return self.login_page("用户名、密码或验证码错误")
         self.audit("auth.login.success", data.get("username", ""))
+            return self.login_page("用户名、密码或验证码错误")
         cookie = session_cookie(SESSION_COOKIE, make_session(data.get("username", "")))
         self.redirect("/", {"Set-Cookie": cookie})
 
@@ -884,6 +892,9 @@ class Handler(BaseHTTPRequestHandler):
         return self.redirect("/logs")
 
 
+        self.send_bytes(b"success", content_type="text/plain; charset=utf-8")
+
+
     def accounts(self) -> None:
         rows = all_rows("SELECT * FROM accounts ORDER BY enabled DESC, name")
         table_rows = []
@@ -920,6 +931,7 @@ class Handler(BaseHTTPRequestHandler):
     def save_account(self) -> None:
         data = self.form()
         values = plaintext_account_values(account_values(data))
+        values = encrypted_account_values(account_values(data))
         columns = account_columns()
         execute(
             f"INSERT INTO accounts({', '.join(columns)}) VALUES({', '.join('?' for _ in columns)})",
@@ -934,6 +946,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.not_found()
         data = self.form()
         values = plaintext_account_values(account_values(data), existing)
+        values = encrypted_account_values(account_values(data), existing)
         columns = account_columns()
         with connect() as conn:
             conn.execute(
@@ -1001,6 +1014,7 @@ class Handler(BaseHTTPRequestHandler):
             "poll_timeout_minutes": str(bounded_int(data.get("poll_timeout_minutes"), 30, 1)),
             "order_timeout_minutes": str(bounded_int(data.get("order_timeout_minutes"), 30, 0)),
             "enable_2fa": "1" if wants_2fa else "0",
+            "enable_2fa": "1" if data.get("enable_2fa") == "1" else "0",
         }
         with connect() as conn:
             for key, value in values.items():
@@ -1011,6 +1025,10 @@ class Handler(BaseHTTPRequestHandler):
     def regenerate_2fa(self) -> None:
         execute("INSERT INTO settings(key, value) VALUES('totp_secret', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (random_totp_secret(),))
         self.audit("settings.2fa.regenerate")
+        self.redirect("/settings")
+
+    def regenerate_2fa(self) -> None:
+        execute("INSERT INTO settings(key, value) VALUES('totp_secret', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (random_totp_secret(),))
         self.redirect("/settings")
 
     def not_found(self) -> None:
@@ -1035,6 +1053,8 @@ def account_columns() -> list[str]:
 
 def plaintext_account_values(values: dict[str, str], existing: Any | None = None) -> dict[str, str]:
     plain = dict(values)
+def encrypted_account_values(values: dict[str, str], existing: Any | None = None) -> dict[str, str]:
+    encrypted = dict(values)
     secret_columns = ["merchant_private_key", "alipay_public_key"]
     for business in PAY_TYPE_ORDER:
         secret_columns.extend([f"{business}_merchant_private_key", f"{business}_alipay_public_key"])
@@ -1044,6 +1064,13 @@ def plaintext_account_values(values: dict[str, str], existing: Any | None = None
         else:
             plain[column] = plain.get(column, "")
     return plain
+        if encrypted.get(column):
+            encrypted[column] = encrypt_secret(encrypted[column])
+        elif existing is not None:
+            encrypted[column] = existing[column]
+        else:
+            encrypted[column] = ""
+    return encrypted
 
 
 def account_display_app_id(account: Any) -> str:
