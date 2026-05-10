@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}订单 - PayPanel{% endblock %}
+{% block content %}
+<h1>订单记录</h1>
+<form class="filters" method="get">
+  <input name="q" value="{{ q }}" placeholder="搜索订单号、标题、支付宝交易号">
+  <select name="status">
+    <option value="">全部状态</option>
+    {% for item in ['WAIT_BUYER_PAY','TRADE_SUCCESS','TRADE_FINISHED','TRADE_CLOSED','FAILED','CREATED'] %}
+      <option value="{{ item }}" {% if status == item %}selected{% endif %}>{{ item }}</option>
+    {% endfor %}
+  </select>
+  <button>查询</button>
+</form>
+{% include "orders_table.html" %}
+{% endblock %}

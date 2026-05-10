@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}PayPanel Alipay{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">PayPanel Alipay</a>
+  <nav>
+    <a href="/orders/new">发起收款</a>
+    <a href="/orders">订单</a>
+    <a href="/accounts">账户</a>
+    <a href="/settings">设置</a>
+    <form action="/logout" method="post"><button>退出</button></form>
+  </nav>
+</header>
+<main class="container">
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>
