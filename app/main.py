@@ -23,9 +23,9 @@ from .auth import (
     random_totp_secret,
     read_session_cookie,
     verify_credentials,
+    verify_totp,
 )
 from .config import get_settings
-from .crypto import decrypt_secret, encrypt_secret
 from .db import all_rows, connect, execute, init_db, one, settings_map
 
 
@@ -131,8 +131,8 @@ def row_to_account(row: Any, pay_type: str = "precreate") -> AlipayAccount:
         id=row["id"],
         app_id=business_value(row, pay_type, "app_id", "app_id"),
         gateway=business_value(row, pay_type, "gateway", "gateway") or "https://openapi.alipay.com/gateway.do",
-        merchant_private_key=decrypt_secret(business_value(row, pay_type, "merchant_private_key", "merchant_private_key")),
-        alipay_public_key=decrypt_secret(business_value(row, pay_type, "alipay_public_key", "alipay_public_key")),
+        merchant_private_key=business_value(row, pay_type, "merchant_private_key", "merchant_private_key"),
+        alipay_public_key=business_value(row, pay_type, "alipay_public_key", "alipay_public_key"),
         app_public_key=business_value(row, pay_type, "app_public_key"),
         app_cert_sn=business_value(row, pay_type, "app_cert_sn", "app_cert_sn") if pay_type in {"wap", "page"} else "",
         alipay_root_cert_sn=business_value(row, pay_type, "alipay_root_cert_sn", "alipay_root_cert_sn") if pay_type in {"wap", "page"} else "",
@@ -147,6 +147,30 @@ def row_to_account(row: Any, pay_type: str = "precreate") -> AlipayAccount:
 
 def default_notify_url() -> str:
     return f"{callback_base_url()}/alipay/notify"
+
+
+def log_event(event: str, message: str = "", level: str = "INFO", ip: str = "", username: str = "", path: str = "") -> None:
+    try:
+        with connect() as conn:
+            conn.execute(
+                "INSERT INTO logs(level, event, message, ip, username, path) VALUES(?, ?, ?, ?, ?, ?)",
+                (level, event, message[:2000], ip[:120], username[:120], path[:500]),
+            )
+    except Exception:
+        pass
+
+
+def logs_table(rows: list[Any]) -> str:
+    body = []
+    for row in rows:
+        body.append(
+            "<tr>"
+            f"<td>{e(row['created_at'])}</td><td>{e(row['level'])}</td><td>{e(row['event'])}</td>"
+            f"<td>{e(row['username'])}</td><td>{e(row['ip'])}</td><td>{e(row['path'])}</td><td>{e(row['message'])}</td></tr>"
+        )
+    if not body:
+        body.append('<tr><td colspan="7" class="muted">暂无日志</td></tr>')
+    return """<table><thead><tr><th>时间</th><th>级别</th><th>事件</th><th>用户</th><th>IP</th><th>路径</th><th>消息</th></tr></thead><tbody>{}</tbody></table>""".format("".join(body))
 
 
 def require_amount(amount: str) -> str:
@@ -183,6 +207,12 @@ def business_inputs(account: Any | None, business: str, is_edit: bool) -> str:
     app_id = business_value(account, business, "app_id", "app_id") if is_edit else ""
     app_public_key = business_value(account, business, "app_public_key") if is_edit else ""
     gateway = business_value(account, business, "gateway", "gateway") if is_edit else "https://openapi.alipay.com/gateway.do"
+    alipay_public_key_help = "PEM 或 Base64（明文保存）"
+    private_help = "PKCS8 PEM 或 Base64（明文保存）"
+    private_required = "required"
+    public_required = "required"
+    merchant_private_key = business_value(account, business, "merchant_private_key", "merchant_private_key") if is_edit else ""
+    alipay_public_key = business_value(account, business, "alipay_public_key", "alipay_public_key") if is_edit else ""
     alipay_public_key_help = "留空表示不修改已保存的支付宝公钥" if is_edit else "PEM 或 Base64"
     private_help = "留空表示不修改已保存的应用私钥" if is_edit else "PKCS8 PEM 或 Base64"
     private_required = "" if is_edit else "required"
@@ -204,6 +234,8 @@ def business_inputs(account: Any | None, business: str, is_edit: bool) -> str:
         <h3>{e(PAY_TYPE_LABELS[business])}参数</h3>
         <label>APPID<input name="{prefix}app_id" value="{e(app_id)}" required></label>
         <label>应用公钥<textarea name="{prefix}app_public_key" rows="4" required>{e(app_public_key)}</textarea></label>
+        <label>应用私钥（{e(private_help)}）<textarea name="{prefix}merchant_private_key" rows="5" {private_required}>{e(merchant_private_key)}</textarea></label>
+        <label>支付宝公钥（{e(alipay_public_key_help)}）<textarea name="{prefix}alipay_public_key" rows="5" {public_required}>{e(alipay_public_key)}</textarea></label>
         <label>应用私钥（{e(private_help)}）<textarea name="{prefix}merchant_private_key" rows="5" {private_required}></textarea></label>
         <label>支付宝公钥（{e(alipay_public_key_help)}）<textarea name="{prefix}alipay_public_key" rows="5" {public_required}></textarea></label>
         <label>网关<input name="{prefix}gateway" value="{e(gateway)}" required></label>
@@ -314,6 +346,7 @@ def page(title: str, body: str, logged_in: bool = True) -> bytes:
     if logged_in:
         nav = f"""
         <header class="topbar"><a class="brand" href="/">{e(site_name())}</a><nav>
+          <a href="/orders/new">发起收款</a><a href="/orders">订单</a><a href="/accounts">账户</a><a href="/logs">日志</a><a href="/settings">设置</a>
           <a href="/orders/new">发起收款</a><a href="/orders">订单</a><a href="/accounts">账户</a><a href="/settings">设置</a>
           <form action="/logout" method="post"><button>退出</button></form>
         </nav></header>
@@ -526,6 +559,9 @@ class Handler(BaseHTTPRequestHandler):
     def username(self) -> str | None:
         return read_session_cookie(self.headers.get("Cookie"))
 
+    def audit(self, event: str, message: str = "", level: str = "INFO") -> None:
+        log_event(event, message, level, self.client_address[0] if self.client_address else "", self.username() or "", self.path)
+
     def host_is_allowed(self) -> bool:
         panel_settings = settings_map()
         if panel_settings.get("enforce_panel_domain") != "1":
@@ -552,6 +588,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
+        self.audit("request", "GET " + self.path)
         if path.startswith("/static/"):
             return self.static(path)
         if path == "/healthz":
@@ -578,6 +615,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.order_detail(order_id) if order_id is not None else self.not_found()
         if path == "/accounts":
             return self.accounts()
+        if path == "/logs":
+            return self.logs_page(query)
         if path.startswith("/accounts/") and path.endswith("/edit"):
             account_id = path_int(path.split("/")[2])
             return self.edit_account(account_id) if account_id is not None else self.not_found()
@@ -588,6 +627,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        self.audit("request", "POST " + self.path)
         if path == "/login":
             return self.login()
         if path == "/alipay/notify":
@@ -600,6 +640,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.redirect("/login", {"Set-Cookie": session_cookie(SESSION_COOKIE, "", max_age=0)})
         if path == "/orders/cleanup":
             return self.cleanup_orders()
+        if path == "/logs/cleanup":
+            return self.cleanup_logs()
         if path == "/orders":
             return self.create_order()
         if path.startswith("/orders/") and path.endswith("/query"):
@@ -653,6 +695,9 @@ class Handler(BaseHTTPRequestHandler):
     def login(self) -> None:
         data = self.form()
         if not verify_credentials(data.get("username", ""), data.get("password", ""), data.get("otp", "")):
+            self.audit("auth.login.failed", data.get("username", ""), "WARN")
+            return self.login_page("用户名、密码或验证码错误")
+        self.audit("auth.login.success", data.get("username", ""))
             return self.login_page("用户名、密码或验证码错误")
         cookie = session_cookie(SESSION_COOKIE, make_session(data.get("username", "")))
         self.redirect("/", {"Set-Cookie": cookie})
@@ -712,6 +757,7 @@ class Handler(BaseHTTPRequestHandler):
         if mode == "all":
             with connect() as conn:
                 conn.execute("DELETE FROM orders")
+            getattr(self, "audit", lambda *args, **kwargs: None)("orders.cleanup", "all")
             return self.redirect("/orders")
         start_at = data.get("cleanup_start", "").strip()
         end_at = data.get("cleanup_end", "").strip()
@@ -726,6 +772,7 @@ class Handler(BaseHTTPRequestHandler):
         if clauses:
             with connect() as conn:
                 conn.execute("DELETE FROM orders WHERE " + " AND ".join(clauses), tuple(params))
+            getattr(self, "audit", lambda *args, **kwargs: None)("orders.cleanup", json.dumps({"start": start_at, "end": end_at}, ensure_ascii=False))
         return self.redirect("/orders")
 
 
@@ -762,6 +809,8 @@ class Handler(BaseHTTPRequestHandler):
             build_payment(order_id, int(data.get("account_id", "0") or 0) or None)
         except Exception as exc:
             execute("UPDATE orders SET status = 'FAILED', last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (str(exc), order_id))
+            self.audit("orders.create.failed", str(exc), "WARN")
+        self.audit("orders.create", out_trade_no)
         self.redirect(f"/orders/{order_id}")
 
     def order_detail(self, order_id: int) -> None:
@@ -790,6 +839,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def delete_order(self, order_id: int) -> None:
         execute("DELETE FROM orders WHERE id = ?", (order_id,))
+        getattr(self, "audit", lambda *args, **kwargs: None)("orders.delete", str(order_id))
         return self.redirect("/orders")
 
     def pay_redirect(self, order_id: int) -> None:
@@ -816,6 +866,32 @@ class Handler(BaseHTTPRequestHandler):
         if not account_row or not alipay.verify(form, row_to_account(account_row, order["pay_type"]).alipay_public_key):
             return self.send_bytes(b"fail", content_type="text/plain; charset=utf-8")
         update_order_status(int(order["id"]), form, json.dumps(form, ensure_ascii=False))
+        log_event("alipay.notify", form.get("out_trade_no", ""), path=self.path)
+        self.send_bytes(b"success", content_type="text/plain; charset=utf-8")
+
+
+    def logs_page(self, query: dict[str, list[str]]) -> None:
+        q = query.get("q", [""])[-1].strip()
+        clauses: list[str] = []
+        params: list[Any] = []
+        if q:
+            clauses.append("(event LIKE ? OR message LIKE ? OR username LIKE ? OR path LIKE ? OR ip LIKE ?)")
+            params.extend([f"%{q}%"] * 5)
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = all_rows(f"SELECT * FROM logs {where} ORDER BY created_at DESC LIMIT 500", tuple(params))
+        body = f"""
+        <h1>操作日志</h1><form class="filters" method="get"><input name="q" value="{e(q)}" placeholder="搜索事件、消息、用户、路径、IP"><button>查询</button></form>
+        <section class="card"><form method="post" action="/logs/cleanup" onsubmit="return confirm('确认清空日志？')"><button class="danger">清空全部日志</button></form></section>
+        {logs_table(rows)}
+        """
+        self.send_bytes(page("日志", body))
+
+    def cleanup_logs(self) -> None:
+        with connect() as conn:
+            conn.execute("DELETE FROM logs")
+        return self.redirect("/logs")
+
+
         self.send_bytes(b"success", content_type="text/plain; charset=utf-8")
 
 
@@ -854,12 +930,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def save_account(self) -> None:
         data = self.form()
+        values = plaintext_account_values(account_values(data))
         values = encrypted_account_values(account_values(data))
         columns = account_columns()
         execute(
             f"INSERT INTO accounts({', '.join(columns)}) VALUES({', '.join('?' for _ in columns)})",
             tuple(values.get(column, "") for column in columns),
         )
+        self.audit("accounts.create", values.get("name", ""))
         self.redirect("/accounts")
 
     def update_account(self, account_id: int) -> None:
@@ -867,6 +945,7 @@ class Handler(BaseHTTPRequestHandler):
         if not existing:
             return self.not_found()
         data = self.form()
+        values = plaintext_account_values(account_values(data), existing)
         values = encrypted_account_values(account_values(data), existing)
         columns = account_columns()
         with connect() as conn:
@@ -874,16 +953,19 @@ class Handler(BaseHTTPRequestHandler):
                 "UPDATE accounts SET " + ", ".join(f"{column} = ?" for column in columns) + ", updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (*[values.get(column, "") for column in columns], account_id),
             )
+        self.audit("accounts.update", f"{account_id}:{values.get('name', '')}")
         self.redirect("/accounts")
 
     def delete_account(self, account_id: int) -> None:
         with connect() as conn:
             conn.execute("UPDATE orders SET account_id = NULL WHERE account_id = ?", (account_id,))
             conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+        self.audit("accounts.delete", str(account_id))
         self.redirect("/accounts")
 
     def toggle_account(self, account_id: int) -> None:
         execute("UPDATE accounts SET enabled = CASE enabled WHEN 1 THEN 0 ELSE 1 END WHERE id = ?", (account_id,))
+        self.audit("accounts.toggle", str(account_id))
         self.redirect("/accounts")
 
 
@@ -903,6 +985,8 @@ class Handler(BaseHTTPRequestHandler):
           <label>轮询超时（分钟）<input name="poll_timeout_minutes" type="number" min="1" value="{e(panel.get('poll_timeout_minutes', '30'))}"></label>
           <label>订单超时关闭（分钟，0 表示不自动关闭）<input name="order_timeout_minutes" type="number" min="0" value="{e(panel.get('order_timeout_minutes', '30'))}"></label>
           <label class="checkbox"><input type="checkbox" name="enable_2fa" value="1" {'checked' if panel.get('enable_2fa') == '1' else ''}> 开启 2FA 登录</label>
+          <label>开启/保持 2FA 时输入动态验证码<input name="totp_code" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位验证码"></label>
+          <p class="muted">开启 2FA 前请先生成密钥并扫码；保存开启时必须输入正确动态验证码。</p>
           <button class="primary">保存设置</button></form><section class="card"><h2>2FA 密钥</h2>{totp}
           <form method="post" action="/settings/2fa/regenerate"><button>生成/重置 2FA 密钥</button></form></section>
         """
@@ -910,6 +994,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def save_settings(self) -> None:
         data = self.form()
+        panel = settings_map()
+        wants_2fa = data.get("enable_2fa") == "1"
+        if wants_2fa:
+            secret = panel.get("totp_secret", "")
+            if not secret:
+                return self.send_bytes(page("2FA 验证失败", '<p class="error">请先生成并扫码绑定 2FA 密钥，再开启 2FA。</p><p><a href="/settings">返回设置</a></p>'), status=400)
+            if not verify_totp(secret, data.get("totp_code", "")):
+                self.audit("settings.2fa.verify.failed", "启用或保持 2FA 时验证码错误", "WARN")
+                return self.send_bytes(page("2FA 验证失败", '<p class="error">动态验证码错误，未保存 2FA 设置。</p><p><a href="/settings">返回设置</a></p>'), status=400)
         values = {
             "site_name": data.get("site_name", "").strip() or "PayPanel Alipay",
             "panel_domain": host_name(data.get("panel_domain", "")),
@@ -920,11 +1013,18 @@ class Handler(BaseHTTPRequestHandler):
             "poll_interval_seconds": str(bounded_int(data.get("poll_interval_seconds"), 8, 3)),
             "poll_timeout_minutes": str(bounded_int(data.get("poll_timeout_minutes"), 30, 1)),
             "order_timeout_minutes": str(bounded_int(data.get("order_timeout_minutes"), 30, 0)),
+            "enable_2fa": "1" if wants_2fa else "0",
             "enable_2fa": "1" if data.get("enable_2fa") == "1" else "0",
         }
         with connect() as conn:
             for key, value in values.items():
                 conn.execute("INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+        self.audit("settings.update", ",".join(values.keys()))
+        return self.redirect("/settings")
+
+    def regenerate_2fa(self) -> None:
+        execute("INSERT INTO settings(key, value) VALUES('totp_secret', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (random_totp_secret(),))
+        self.audit("settings.2fa.regenerate")
         self.redirect("/settings")
 
     def regenerate_2fa(self) -> None:
@@ -951,12 +1051,19 @@ def account_columns() -> list[str]:
     return columns
 
 
+def plaintext_account_values(values: dict[str, str], existing: Any | None = None) -> dict[str, str]:
+    plain = dict(values)
 def encrypted_account_values(values: dict[str, str], existing: Any | None = None) -> dict[str, str]:
     encrypted = dict(values)
     secret_columns = ["merchant_private_key", "alipay_public_key"]
     for business in PAY_TYPE_ORDER:
         secret_columns.extend([f"{business}_merchant_private_key", f"{business}_alipay_public_key"])
     for column in secret_columns:
+        if not plain.get(column) and existing is not None:
+            plain[column] = existing[column]
+        else:
+            plain[column] = plain.get(column, "")
+    return plain
         if encrypted.get(column):
             encrypted[column] = encrypt_secret(encrypted[column])
         elif existing is not None:

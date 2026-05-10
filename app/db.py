@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .config import get_settings
-from .crypto import encrypt_secret
+from .crypto import decrypt_secret
 
 
 SCHEMA = """
@@ -80,8 +80,19 @@ CREATE TABLE IF NOT EXISTS orders (
     paid_at TEXT DEFAULT '',
     FOREIGN KEY (account_id) REFERENCES accounts(id)
 );
+CREATE TABLE IF NOT EXISTS logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    level TEXT NOT NULL DEFAULT 'INFO',
+    event TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    ip TEXT DEFAULT '',
+    username TEXT DEFAULT '',
+    path TEXT DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);
+CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at);
 """
 
 DEFAULT_SETTINGS = {
@@ -140,12 +151,20 @@ def init_db() -> None:
             },
         )
         migrate_account_business_columns(conn)
-        secret_columns = ["merchant_private_key", "alipay_public_key"]
-        for business in ("precreate", "wap", "page"):
-            secret_columns.extend([f"{business}_merchant_private_key", f"{business}_alipay_public_key"])
-        rows = conn.execute("SELECT * FROM accounts").fetchall()
-        for row in rows:
-            updates = {column: encrypt_secret(row[column]) for column in secret_columns if column in row.keys()}
+        migrate_account_secret_plaintext(conn)
+
+
+def migrate_account_secret_plaintext(conn: sqlite3.Connection) -> None:
+    secret_columns = ["merchant_private_key", "alipay_public_key"]
+    for business in ("precreate", "wap", "page"):
+        secret_columns.extend([f"{business}_merchant_private_key", f"{business}_alipay_public_key"])
+    rows = conn.execute("SELECT * FROM accounts").fetchall()
+    for row in rows:
+        updates = {}
+        for column in secret_columns:
+            if column in row.keys() and row[column]:
+                updates[column] = decrypt_secret(row[column])
+        if updates:
             conn.execute(
                 "UPDATE accounts SET " + ", ".join(f"{column} = ?" for column in updates) + " WHERE id = ?",
                 (*updates.values(), row["id"]),

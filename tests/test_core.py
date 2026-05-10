@@ -168,6 +168,50 @@ class DomainSettingsTests(unittest.TestCase):
             get_settings.cache_clear()
 
 
+class TwoFactorSettingsTests(unittest.TestCase):
+    def test_enabling_2fa_requires_valid_current_totp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["APP_DATABASE_PATH"] = str(Path(tmp) / "paypanel.db")
+            os.environ["APP_SECRET_KEY"] = "2fa-secret"
+            from app.auth import random_totp_secret, totp_code
+            from app.config import get_settings
+            from app.db import execute, init_db, settings_map
+            from app.main import Handler
+
+            get_settings.cache_clear()
+            init_db()
+            secret = random_totp_secret()
+            execute("INSERT INTO settings(key, value) VALUES('totp_secret', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (secret,))
+
+            class BadDummy:
+                path = "/settings"
+                client_address = ("127.0.0.1", 0)
+                form = lambda self: {"enable_2fa": "1", "totp_code": "000000"}
+                username = lambda self: "admin"
+                audit = lambda self, *args, **kwargs: None
+                send_bytes = lambda self, data, status=200, content_type="text/html; charset=utf-8", headers=None: status
+
+            self.assertEqual(Handler.save_settings(BadDummy()), 400)
+            self.assertEqual(settings_map()["enable_2fa"], "0")
+
+            class GoodDummy:
+                path = "/settings"
+                client_address = ("127.0.0.1", 0)
+                form = lambda self: {"enable_2fa": "1", "totp_code": totp_code(secret)}
+                username = lambda self: "admin"
+                audit = lambda self, *args, **kwargs: None
+                redirect = lambda self, location: location
+
+            self.assertEqual(Handler.save_settings(GoodDummy()), "/settings")
+            self.assertEqual(settings_map()["enable_2fa"], "1")
+
+            for key in ("APP_DATABASE_PATH", "APP_SECRET_KEY"):
+                os.environ.pop(key, None)
+            get_settings.cache_clear()
+
+
+class SecretStorageTests(unittest.TestCase):
+    def test_crypto_helpers_still_round_trip_and_account_secrets_stay_plaintext(self) -> None:
 class SecretStorageTests(unittest.TestCase):
     def test_account_secrets_are_encrypted_and_migrated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -193,6 +237,9 @@ class SecretStorageTests(unittest.TestCase):
             )
             init_db()
             row = one("SELECT merchant_private_key, alipay_public_key FROM accounts WHERE name = ?", ("legacy",))
+            self.assertEqual(row["merchant_private_key"], "legacy-private")
+            self.assertEqual(row["alipay_public_key"], "legacy-public")
+            self.assertFalse(row["merchant_private_key"].startswith("enc:v1:"))
             self.assertTrue(row["merchant_private_key"].startswith("enc:v1:"))
             self.assertTrue(row["alipay_public_key"].startswith("enc:v1:"))
             self.assertEqual(decrypt_secret(row["merchant_private_key"]), "legacy-private")
@@ -248,6 +295,7 @@ class SecretStorageTests(unittest.TestCase):
             self.assertEqual(row["precreate_app_id"], "app")
             self.assertEqual(row["wap_app_id"], "app")
             self.assertEqual(row["page_app_id"], "app")
+            self.assertEqual(row["precreate_merchant_private_key"], "private")
             self.assertTrue(row["precreate_merchant_private_key"].startswith("enc:v1:"))
 
             for key in ("APP_DATABASE_PATH", "APP_SECRET_KEY"):
@@ -299,6 +347,19 @@ class OrderCleanupTests(unittest.TestCase):
 
             self.assertEqual(Handler.cleanup_orders(DummyAll()), "/orders")
             self.assertEqual(all_rows("SELECT out_trade_no FROM orders"), [])
+
+            from app.main import log_event
+            log_event("test", "hello", path="/unit")
+            self.assertEqual(len(all_rows("SELECT event FROM logs WHERE event = 'test'")), 1)
+
+            class DummyLogs:
+                path = "/logs/cleanup"
+                client_address = ("127.0.0.1", 0)
+                username = lambda self: "admin"
+                redirect = lambda self, location: location
+
+            self.assertEqual(Handler.cleanup_logs(DummyLogs()), "/logs")
+            self.assertEqual(len(all_rows("SELECT event FROM logs WHERE event = 'test'")), 0)
 
             for key in ("APP_DATABASE_PATH", "APP_SECRET_KEY"):
                 os.environ.pop(key, None)
