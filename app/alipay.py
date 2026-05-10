@@ -22,12 +22,13 @@ class AlipayAccount:
     gateway: str
     merchant_private_key: str
     alipay_public_key: str
+    app_public_key: str = ""
     app_cert_sn: str = ""
     alipay_root_cert_sn: str = ""
     notify_url: str = ""
     return_url: str = ""
     pay_types: tuple[str, ...] = ("precreate", "page", "wap")
-    precreate_product_code: str = ""
+    precreate_product_code: str = "FACE_TO_FACE_PAYMENT"
     page_product_code: str = "FAST_INSTANT_TRADE_PAY"
     wap_product_code: str = "QUICK_WAP_WAY"
 
@@ -177,6 +178,8 @@ def request_api(account: AlipayAccount, method: str, biz_content: dict[str, Any]
     response = post_api(account, method, biz_content)
     if response.get("code") != "10000":
         message = response.get("sub_msg") or response.get("msg") or "支付宝接口请求失败"
+        if response.get("sub_code") == "ACCESS_FORBIDDEN":
+            message += "；请确认该支付宝应用已签约/开通当前支付产品，并且使用的是该产品对应的 APPID、应用私钥、应用公钥和支付宝公钥。"
         raise RuntimeError(message)
     return response
 

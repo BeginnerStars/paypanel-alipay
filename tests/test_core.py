@@ -77,18 +77,31 @@ class MainHelperTests(unittest.TestCase):
         self.assertEqual(normalize_pay_types("wap,page"), ("wap", "page"))
         self.assertEqual(pay_type_labels("precreate,wap"), "当面付、手机网站支付")
         form_html = account_form("/accounts")
-        self.assertIn('type="radio" name="pay_types" value="precreate" checked', form_html)
+        self.assertIn('type="checkbox" name="pay_types" value="precreate" checked', form_html)
         self.assertIn("business-wap", form_html)
-        values = account_values({"pay_types": ["wap"], "return_url": "https://pay.example.com/return", "page_product_code": "", "wap_product_code": "CUSTOM_WAP"})
-        self.assertEqual(values["pay_types"], "wap")
-        self.assertEqual(values["return_url"], "https://pay.example.com/return")
+        values = account_values({
+            "pay_types": ["precreate", "wap"],
+            "precreate_app_id": "face-app",
+            "precreate_app_public_key": "face-app-public",
+            "precreate_merchant_private_key": "face-private",
+            "precreate_alipay_public_key": "face-alipay-public",
+            "wap_app_id": "wap-app",
+            "wap_return_url": "https://pay.example.com/return",
+            "page_product_code": "",
+            "wap_product_code": "CUSTOM_WAP",
+        })
+        self.assertEqual(values["pay_types"], "precreate,wap")
+        self.assertEqual(values["app_id"], "face-app")
+        self.assertEqual(values["precreate_app_id"], "face-app")
+        self.assertEqual(values["wap_app_id"], "wap-app")
+        self.assertEqual(values["wap_return_url"], "https://pay.example.com/return")
         self.assertEqual(values["page_product_code"], "FAST_INSTANT_TRADE_PAY")
         self.assertEqual(values["wap_product_code"], "CUSTOM_WAP")
         precreate = account_values({
             "pay_types": ["precreate"],
-            "return_url": "https://ignore.example.com",
-            "app_cert_sn": "APP_CERT",
-            "alipay_root_cert_sn": "ROOT_CERT",
+            "precreate_app_id": "face-app",
+            "precreate_app_cert_sn": "APP_CERT",
+            "precreate_alipay_root_cert_sn": "ROOT_CERT",
         })
         self.assertEqual(precreate["pay_types"], "precreate")
         self.assertEqual(precreate["return_url"], "")
@@ -223,10 +236,19 @@ class SecretStorageTests(unittest.TestCase):
                     """
                 )
             init_db()
-            row = one("SELECT pay_types, page_product_code, wap_product_code FROM accounts WHERE name = ?", ("legacy",))
+            row = one("""
+                SELECT pay_types, precreate_product_code, page_product_code, wap_product_code,
+                       precreate_app_id, precreate_merchant_private_key, wap_app_id, page_app_id
+                FROM accounts WHERE name = ?
+            """, ("legacy",))
             self.assertEqual(row["pay_types"], "precreate,page,wap")
+            self.assertEqual(row["precreate_product_code"], "FACE_TO_FACE_PAYMENT")
             self.assertEqual(row["page_product_code"], "FAST_INSTANT_TRADE_PAY")
             self.assertEqual(row["wap_product_code"], "QUICK_WAP_WAY")
+            self.assertEqual(row["precreate_app_id"], "app")
+            self.assertEqual(row["wap_app_id"], "app")
+            self.assertEqual(row["page_app_id"], "app")
+            self.assertTrue(row["precreate_merchant_private_key"].startswith("enc:v1:"))
 
             for key in ("APP_DATABASE_PATH", "APP_SECRET_KEY"):
                 os.environ.pop(key, None)
@@ -259,6 +281,17 @@ class OrderCleanupTests(unittest.TestCase):
 
             self.assertEqual(Handler.cleanup_orders(Dummy()), "/orders")
             self.assertEqual([row["out_trade_no"] for row in all_rows("SELECT out_trade_no FROM orders")], ["NEW"])
+
+            class DummyDelete:
+                redirect = lambda self, location: location
+
+            remaining = all_rows("SELECT id FROM orders WHERE out_trade_no = 'NEW'")[0]["id"]
+            self.assertEqual(Handler.delete_order(DummyDelete(), int(remaining)), "/orders")
+            self.assertEqual(all_rows("SELECT out_trade_no FROM orders"), [])
+            execute(
+                "INSERT INTO orders(out_trade_no, amount, subject, pay_type, status, created_at) VALUES(?, ?, ?, ?, ?, ?)",
+                ("NEW", "1.00", "new", "precreate", "WAIT_BUYER_PAY", "2026-02-01 00:00:00"),
+            )
 
             class DummyAll:
                 form = lambda self: {"cleanup_mode": "all"}

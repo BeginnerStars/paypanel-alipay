@@ -23,9 +23,33 @@ CREATE TABLE IF NOT EXISTS accounts (
     notify_url TEXT DEFAULT '',
     return_url TEXT DEFAULT '',
     pay_types TEXT NOT NULL DEFAULT 'precreate,page,wap',
-    precreate_product_code TEXT DEFAULT '',
+    precreate_product_code TEXT DEFAULT 'FACE_TO_FACE_PAYMENT',
     page_product_code TEXT DEFAULT 'FAST_INSTANT_TRADE_PAY',
     wap_product_code TEXT DEFAULT 'QUICK_WAP_WAY',
+    precreate_app_id TEXT DEFAULT '',
+    precreate_app_public_key TEXT DEFAULT '',
+    precreate_merchant_private_key TEXT DEFAULT '',
+    precreate_alipay_public_key TEXT DEFAULT '',
+    precreate_gateway TEXT DEFAULT 'https://openapi.alipay.com/gateway.do',
+    precreate_notify_url TEXT DEFAULT '',
+    wap_app_id TEXT DEFAULT '',
+    wap_app_public_key TEXT DEFAULT '',
+    wap_merchant_private_key TEXT DEFAULT '',
+    wap_alipay_public_key TEXT DEFAULT '',
+    wap_gateway TEXT DEFAULT 'https://openapi.alipay.com/gateway.do',
+    wap_notify_url TEXT DEFAULT '',
+    wap_return_url TEXT DEFAULT '',
+    wap_app_cert_sn TEXT DEFAULT '',
+    wap_alipay_root_cert_sn TEXT DEFAULT '',
+    page_app_id TEXT DEFAULT '',
+    page_app_public_key TEXT DEFAULT '',
+    page_merchant_private_key TEXT DEFAULT '',
+    page_alipay_public_key TEXT DEFAULT '',
+    page_gateway TEXT DEFAULT 'https://openapi.alipay.com/gateway.do',
+    page_notify_url TEXT DEFAULT '',
+    page_return_url TEXT DEFAULT '',
+    page_app_cert_sn TEXT DEFAULT '',
+    page_alipay_root_cert_sn TEXT DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
     failure_count INTEGER NOT NULL DEFAULT 0,
     last_error TEXT DEFAULT '',
@@ -109,16 +133,70 @@ def init_db() -> None:
             "accounts",
             {
                 "pay_types": "TEXT NOT NULL DEFAULT 'precreate,page,wap'",
-                "precreate_product_code": "TEXT DEFAULT ''",
+                "precreate_product_code": "TEXT DEFAULT 'FACE_TO_FACE_PAYMENT'",
                 "page_product_code": "TEXT DEFAULT 'FAST_INSTANT_TRADE_PAY'",
                 "wap_product_code": "TEXT DEFAULT 'QUICK_WAP_WAY'",
+                **business_columns(),
             },
         )
-        rows = conn.execute("SELECT id, merchant_private_key, alipay_public_key FROM accounts").fetchall()
+        migrate_account_business_columns(conn)
+        secret_columns = ["merchant_private_key", "alipay_public_key"]
+        for business in ("precreate", "wap", "page"):
+            secret_columns.extend([f"{business}_merchant_private_key", f"{business}_alipay_public_key"])
+        rows = conn.execute("SELECT * FROM accounts").fetchall()
         for row in rows:
+            updates = {column: encrypt_secret(row[column]) for column in secret_columns if column in row.keys()}
             conn.execute(
-                "UPDATE accounts SET merchant_private_key = ?, alipay_public_key = ? WHERE id = ?",
-                (encrypt_secret(row["merchant_private_key"]), encrypt_secret(row["alipay_public_key"]), row["id"]),
+                "UPDATE accounts SET " + ", ".join(f"{column} = ?" for column in updates) + " WHERE id = ?",
+                (*updates.values(), row["id"]),
+            )
+
+
+def business_columns() -> dict[str, str]:
+    columns: dict[str, str] = {}
+    for business in ("precreate", "wap", "page"):
+        columns[f"{business}_app_id"] = "TEXT DEFAULT ''"
+        columns[f"{business}_app_public_key"] = "TEXT DEFAULT ''"
+        columns[f"{business}_merchant_private_key"] = "TEXT DEFAULT ''"
+        columns[f"{business}_alipay_public_key"] = "TEXT DEFAULT ''"
+        columns[f"{business}_gateway"] = "TEXT DEFAULT 'https://openapi.alipay.com/gateway.do'"
+        columns[f"{business}_notify_url"] = "TEXT DEFAULT ''"
+    for business in ("wap", "page"):
+        columns[f"{business}_return_url"] = "TEXT DEFAULT ''"
+        columns[f"{business}_app_cert_sn"] = "TEXT DEFAULT ''"
+        columns[f"{business}_alipay_root_cert_sn"] = "TEXT DEFAULT ''"
+    return columns
+
+
+def migrate_account_business_columns(conn: sqlite3.Connection) -> None:
+    rows = conn.execute("SELECT * FROM accounts").fetchall()
+    for row in rows:
+        pay_types = [item.strip() for item in (row["pay_types"] or "precreate,page,wap").split(",") if item.strip()]
+        updates = {}
+        for business in pay_types:
+            if business not in {"precreate", "wap", "page"}:
+                continue
+            if not row[f"{business}_app_id"]:
+                updates[f"{business}_app_id"] = row["app_id"]
+            if not row[f"{business}_merchant_private_key"]:
+                updates[f"{business}_merchant_private_key"] = row["merchant_private_key"]
+            if not row[f"{business}_alipay_public_key"]:
+                updates[f"{business}_alipay_public_key"] = row["alipay_public_key"]
+            if not row[f"{business}_gateway"]:
+                updates[f"{business}_gateway"] = row["gateway"]
+            if not row[f"{business}_notify_url"]:
+                updates[f"{business}_notify_url"] = row["notify_url"]
+            if business in {"wap", "page"}:
+                if not row[f"{business}_return_url"]:
+                    updates[f"{business}_return_url"] = row["return_url"]
+                if not row[f"{business}_app_cert_sn"]:
+                    updates[f"{business}_app_cert_sn"] = row["app_cert_sn"]
+                if not row[f"{business}_alipay_root_cert_sn"]:
+                    updates[f"{business}_alipay_root_cert_sn"] = row["alipay_root_cert_sn"]
+        if updates:
+            conn.execute(
+                "UPDATE accounts SET " + ", ".join(f"{column} = ?" for column in updates) + " WHERE id = ?",
+                (*updates.values(), row["id"]),
             )
 
 

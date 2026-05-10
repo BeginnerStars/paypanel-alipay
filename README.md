@@ -102,8 +102,9 @@ docker compose up -d --build
 
 - 服务端接口（当面付预创建、交易查询）使用 `POST` 提交到网关。
 - 电脑网站支付与手机网站支付使用自动提交的 `POST` HTML 表单跳转支付宝收银台。
-- 账户页新增账户时优先默认“当面付”，也可单选“手机网站支付”或“电脑网站支付”，页面会按所选业务只展示该业务需要额外关注的参数。
-- 当面付固定使用密钥模式，不展示或发送证书模式参数；电脑网站支付默认传 `product_code=FAST_INSTANT_TRADE_PAY`，手机网站支付默认传 `product_code=QUICK_WAP_WAY` 并展示同步返回 URL。
+- 账户页新增账户时优先默认“当面付”，也可按同一账户实际开通情况同时启用“手机网站支付”和“电脑网站支付”。
+- 每个账户的当面付、手机网站支付、电脑网站支付参数分别保存、分别用于请求，互不混用；当面付固定使用密钥模式，需要 APPID、应用公钥、应用私钥、支付宝公钥，并默认传 `product_code=FACE_TO_FACE_PAYMENT`。
+- 电脑网站支付默认传 `product_code=FAST_INSTANT_TRADE_PAY`，手机网站支付默认传 `product_code=QUICK_WAP_WAY` 并展示同步返回 URL。
 - 异步通知地址由公共参数 `notify_url` 传入，通知到达后会先验签，再返回 `success`。
 - 支付宝 OpenAPI JSON 响应如果包含 `sign`，会按 `xxx_response` 节点原始 JSON 值进行验签。
 
@@ -130,7 +131,7 @@ python scripts/check_alipay_account.py
    - App ID
    - 应用私钥（PKCS8 PEM 或去掉头尾后的 Base64）
    - 支付宝公钥（PEM 或 Base64）
-   - 当面付使用密钥模式，不需要证书 SN；手机/电脑网站支付如使用证书模式，可填写应用公钥证书 SN、支付宝根证书 SN
+   - 按启用业务分别填写 APPID、应用公钥、应用私钥、支付宝公钥；当面付使用密钥模式，不需要证书 SN；手机/电脑网站支付如使用证书模式，可填写应用公钥证书 SN、支付宝根证书 SN
 3. 将支付宝应用中的异步通知地址配置为：
 
 ```text
