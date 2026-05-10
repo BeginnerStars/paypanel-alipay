@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}设置 - PayPanel{% endblock %}
+{% block content %}
+<h1>设置</h1>
+<form class="card form" method="post" action="/settings">
+  <label class="checkbox"><input type="checkbox" name="enable_account_rotation" value="1" {% if settings.enable_account_rotation == '1' %}checked{% endif %}> 开启多账户轮询/失败切换</label>
+  <label class="checkbox"><input type="checkbox" name="enable_polling" value="1" {% if settings.enable_polling == '1' %}checked{% endif %}> 开启订单状态自动轮询</label>
+  <label>轮询间隔（秒）<input name="poll_interval_seconds" type="number" min="3" value="{{ settings.poll_interval_seconds }}"></label>
+  <label>轮询超时（分钟）<input name="poll_timeout_minutes" type="number" min="1" value="{{ settings.poll_timeout_minutes }}"></label>
+  <label class="checkbox"><input type="checkbox" name="enable_2fa" value="1" {% if settings.enable_2fa == '1' %}checked{% endif %}> 开启 2FA 登录</label>
+  <button class="primary">保存设置</button>
+</form>
+<section class="card">
+  <h2>2FA 密钥</h2>
+  {% if totp_qr %}<img class="totp" src="{{ totp_qr }}" alt="TOTP 二维码"><p>用 Authenticator 扫码后，再开启 2FA。</p>{% else %}<p>尚未生成 2FA 密钥。</p>{% endif %}
+  <form method="post" action="/settings/2fa/regenerate"><button>生成/重置 2FA 密钥</button></form>
+</section>
+{% endblock %}

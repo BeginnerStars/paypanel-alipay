@@ -1,0 +1,18 @@
+<table>
+  <thead><tr><th>商户订单号</th><th>主题</th><th>金额</th><th>方式</th><th>状态</th><th>创建时间</th><th></th></tr></thead>
+  <tbody>
+  {% for order in orders or recent %}
+    <tr>
+      <td><code>{{ order.out_trade_no }}</code></td>
+      <td>{{ order.subject }}</td>
+      <td>¥{{ order.amount }}</td>
+      <td>{{ order.pay_type }}</td>
+      <td><span class="badge {{ order.status|lower }}">{{ order.status }}</span></td>
+      <td>{{ order.created_at }}</td>
+      <td><a href="/orders/{{ order.id }}">详情</a></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="muted">暂无订单</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

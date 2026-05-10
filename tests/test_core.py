@@ -212,6 +212,8 @@ class TwoFactorSettingsTests(unittest.TestCase):
 
 class SecretStorageTests(unittest.TestCase):
     def test_crypto_helpers_still_round_trip_and_account_secrets_stay_plaintext(self) -> None:
+class SecretStorageTests(unittest.TestCase):
+    def test_account_secrets_are_encrypted_and_migrated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["APP_DATABASE_PATH"] = str(Path(tmp) / "paypanel.db")
             os.environ["APP_SECRET_KEY"] = "storage-secret"
@@ -238,6 +240,10 @@ class SecretStorageTests(unittest.TestCase):
             self.assertEqual(row["merchant_private_key"], "legacy-private")
             self.assertEqual(row["alipay_public_key"], "legacy-public")
             self.assertFalse(row["merchant_private_key"].startswith("enc:v1:"))
+            self.assertTrue(row["merchant_private_key"].startswith("enc:v1:"))
+            self.assertTrue(row["alipay_public_key"].startswith("enc:v1:"))
+            self.assertEqual(decrypt_secret(row["merchant_private_key"]), "legacy-private")
+            self.assertEqual(decrypt_secret(row["alipay_public_key"]), "legacy-public")
 
             for key in ("APP_DATABASE_PATH", "APP_SECRET_KEY"):
                 os.environ.pop(key, None)
@@ -290,6 +296,7 @@ class SecretStorageTests(unittest.TestCase):
             self.assertEqual(row["wap_app_id"], "app")
             self.assertEqual(row["page_app_id"], "app")
             self.assertEqual(row["precreate_merchant_private_key"], "private")
+            self.assertTrue(row["precreate_merchant_private_key"].startswith("enc:v1:"))
 
             for key in ("APP_DATABASE_PATH", "APP_SECRET_KEY"):
                 os.environ.pop(key, None)
