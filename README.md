@@ -91,6 +91,7 @@ docker compose up -d --build
 
 ## 域名、HTTPS 与回调
 
+- **站点名称**：可在设置页或 `.env` 的 `APP_SITE_NAME` 自定义面板标题、顶部品牌名和 2FA 发行方名称。
 - **绑定访问域名**：在设置页填写 `pay.example.com` 并开启“仅允许绑定域名访问面板”后，非绑定 Host 会返回 421。
 - **自定义回调域名**：在设置页填写 `https://notify.example.com` 后，默认支付宝异步通知地址会变为 `https://notify.example.com/alipay/notify`；单个支付宝账户仍可在账户页覆盖通知 URL。
 - **内置 HTTPS**：可在设置页启用并填写证书/私钥路径，例如 Docker 部署时将证书放到 `./certs`，填写 `/app/certs/fullchain.pem` 与 `/app/certs/privkey.pem`，保存后重启容器生效。
@@ -102,8 +103,8 @@ docker compose up -d --build
 
 - 服务端接口（当面付预创建、交易查询）使用 `POST` 提交到网关。
 - 电脑网站支付与手机网站支付使用自动提交的 `POST` HTML 表单跳转支付宝收银台。
-- 账户页可按支付宝应用实际签约情况勾选“当面付 / 手机网站支付 / 电脑网站支付”；发起订单时只会使用支持对应支付方式的账户。
-- 电脑网站支付默认传 `product_code=FAST_INSTANT_TRADE_PAY`，手机网站支付默认传 `product_code=QUICK_WAP_WAY`；当面付预创建默认不传 `product_code`，如支付宝侧要求可在账户中单独配置。
+- 账户页新增账户时优先默认“当面付”，也可单选“手机网站支付”或“电脑网站支付”，页面会按所选业务只展示该业务需要额外关注的参数。
+- 电脑网站支付默认传 `product_code=FAST_INSTANT_TRADE_PAY`，手机网站支付默认传 `product_code=QUICK_WAP_WAY` 并展示同步返回 URL；当面付预创建默认不传 `product_code`，如支付宝侧要求可在账户中单独配置。
 - 异步通知地址由公共参数 `notify_url` 传入，通知到达后会先验签，再返回 `success`。
 - 支付宝 OpenAPI JSON 响应如果包含 `sign`，会按 `xxx_response` 节点原始 JSON 值进行验签。
 

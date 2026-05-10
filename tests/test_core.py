@@ -52,22 +52,41 @@ class MainHelperTests(unittest.TestCase):
             get_settings.cache_clear()
 
 
-    def test_login_page_uses_centering_wrapper(self) -> None:
+    def test_login_page_uses_centering_wrapper_and_site_name(self) -> None:
+        old_site_name = os.environ.get("APP_SITE_NAME")
+        os.environ["APP_SITE_NAME"] = "我的收款台"
+        from app.config import get_settings
         from app.main import page
 
-        html = page("登录", "<form></form>", logged_in=False).decode()
-        self.assertIn('main class="login-page"', html)
-        self.assertNotIn('class="container"', html)
+        get_settings.cache_clear()
+        try:
+            html = page("登录", "<form></form>", logged_in=False).decode()
+            self.assertIn('main class="login-page"', html)
+            self.assertIn("登录 - 我的收款台", html)
+            self.assertNotIn('class="container"', html)
+        finally:
+            if old_site_name is None:
+                os.environ.pop("APP_SITE_NAME", None)
+            else:
+                os.environ["APP_SITE_NAME"] = old_site_name
+            get_settings.cache_clear()
 
-    def test_account_pay_type_helpers_preserve_product_codes(self) -> None:
-        from app.main import account_values, normalize_pay_types, pay_type_labels
+    def test_account_pay_type_helpers_preserve_business_specific_values(self) -> None:
+        from app.main import account_form, account_values, normalize_pay_types, pay_type_labels
 
         self.assertEqual(normalize_pay_types("wap,page"), ("wap", "page"))
         self.assertEqual(pay_type_labels("precreate,wap"), "当面付、手机网站支付")
-        values = account_values({"pay_types": ["wap"], "page_product_code": "", "wap_product_code": "CUSTOM_WAP"})
+        form_html = account_form("/accounts")
+        self.assertIn('type="radio" name="pay_types" value="precreate" checked', form_html)
+        self.assertIn("business-wap", form_html)
+        values = account_values({"pay_types": ["wap"], "return_url": "https://pay.example.com/return", "page_product_code": "", "wap_product_code": "CUSTOM_WAP"})
         self.assertEqual(values["pay_types"], "wap")
+        self.assertEqual(values["return_url"], "https://pay.example.com/return")
         self.assertEqual(values["page_product_code"], "FAST_INSTANT_TRADE_PAY")
         self.assertEqual(values["wap_product_code"], "CUSTOM_WAP")
+        precreate = account_values({"pay_types": ["precreate"], "return_url": "https://ignore.example.com"})
+        self.assertEqual(precreate["pay_types"], "precreate")
+        self.assertEqual(precreate["return_url"], "")
 
 
 class TimeoutTests(unittest.TestCase):
@@ -118,6 +137,7 @@ class DomainSettingsTests(unittest.TestCase):
 
             get_settings.cache_clear()
             init_db()
+            self.assertEqual(settings_map()["site_name"], "PayPanel Alipay")
             self.assertEqual(settings_map()["callback_base_url"], "https://notify.example.com/")
             self.assertEqual(default_notify_url(), "https://notify.example.com/alipay/notify")
             self.assertEqual(bound_panel_domain(), "pay-bound.example.com")

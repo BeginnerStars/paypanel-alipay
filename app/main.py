@@ -61,6 +61,10 @@ def panel_settings_value(key: str, default: str = "") -> str:
         return default.strip()
 
 
+def site_name() -> str:
+    return panel_settings_value("site_name", get_settings().site_name) or "PayPanel Alipay"
+
+
 def panel_base_url() -> str:
     configured_domain = host_name(panel_settings_value("panel_domain"))
     if configured_domain:
@@ -171,10 +175,17 @@ def pay_type_options(selected: str = "precreate") -> str:
     )
 
 
+def primary_pay_type(value: str | list[str] | tuple[str, ...] | None) -> str:
+    return normalize_pay_types(value)[0]
+
+
+def business_radio(value: str, selected: str) -> str:
+    return f'<label class="checkbox"><input type="radio" name="pay_types" value="{e(value)}" {"checked" if selected == value else ""}> {e(PAY_TYPE_LABELS[value])}</label>'
+
+
 def account_form(action: str, account: Any | None = None) -> str:
     is_edit = account is not None
-    selected = normalize_pay_types(account["pay_types"] if is_edit else PAY_TYPE_ORDER)
-    checked = {item: "checked" if item in selected else "" for item in PAY_TYPE_ORDER}
+    selected = primary_pay_type(account["pay_types"] if is_edit else "precreate")
     key_required = "" if is_edit else "required"
     private_help = "留空表示不修改已保存的应用私钥" if is_edit else "PKCS8 PEM 或 Base64"
     public_help = "留空表示不修改已保存的支付宝公钥" if is_edit else "PEM 或 Base64"
@@ -190,41 +201,69 @@ def account_form(action: str, account: Any | None = None) -> str:
     page_product_code = account["page_product_code"] if is_edit else DEFAULT_PRODUCT_CODES["page"]
     wap_product_code = account["wap_product_code"] if is_edit else DEFAULT_PRODUCT_CODES["wap"]
     return f"""
-    <form class="card form" method="post" action="{e(action)}">
-      <label>名称<input name="name" value="{e(name)}" required></label><label>App ID<input name="app_id" value="{e(app_id)}" required></label>
-      <label>网关<input name="gateway" value="{e(gateway)}" required></label>
-      <fieldset><legend>开通/签约的支付产品</legend>
-        <label class="checkbox"><input type="checkbox" name="pay_types" value="precreate" {checked['precreate']}> 当面付（alipay.trade.precreate）</label>
-        <label class="checkbox"><input type="checkbox" name="pay_types" value="wap" {checked['wap']}> 手机网站支付（alipay.trade.wap.pay）</label>
-        <label class="checkbox"><input type="checkbox" name="pay_types" value="page" {checked['page']}> 电脑网站支付（alipay.trade.page.pay）</label>
+    <form class="card form account-form" method="post" action="{e(action)}" data-selected-business="{e(selected)}">
+      <fieldset><legend>业务类型（优先推荐当面付）</legend>
+        {business_radio('precreate', selected)}
+        {business_radio('wap', selected)}
+        {business_radio('page', selected)}
       </fieldset>
-      <label>当面付 product_code（通常可留空；如支付宝要求可填 FACE_TO_FACE_PAYMENT）<input name="precreate_product_code" value="{e(precreate_product_code)}"></label>
-      <label>手机网站支付 product_code<input name="wap_product_code" value="{e(wap_product_code)}" placeholder="QUICK_WAP_WAY"></label>
-      <label>电脑网站支付 product_code<input name="page_product_code" value="{e(page_product_code)}" placeholder="FAST_INSTANT_TRADE_PAY"></label>
+      <div class="business-hint business-precreate"><strong>当面付</strong>用于生成支付宝预创建扫码收款二维码，通常只需要应用凭据、公钥和异步通知地址。</div>
+      <div class="business-hint business-wap"><strong>手机网站支付</strong>用于移动端跳转支付宝收银台，需要应用凭据、异步通知地址、同步返回地址和 QUICK_WAP_WAY 产品码。</div>
+      <div class="business-hint business-page"><strong>电脑网站支付</strong>用于 PC 端跳转支付宝收银台，需要应用凭据、异步通知地址、同步返回地址和 FAST_INSTANT_TRADE_PAY 产品码。</div>
+      <label>账户名称<input name="name" value="{e(name)}" required></label>
+      <label>App ID<input name="app_id" value="{e(app_id)}" required></label>
+      <label>网关<input name="gateway" value="{e(gateway)}" required></label>
       <label>应用私钥（{e(private_help)}）<textarea name="merchant_private_key" rows="5" {key_required}></textarea></label>
       <label>支付宝公钥（{e(public_help)}）<textarea name="alipay_public_key" rows="5" {key_required}></textarea></label>
-      <label>应用公钥证书 SN（证书模式可填）<input name="app_cert_sn" value="{e(app_cert_sn)}"></label><label>支付宝根证书 SN（证书模式可填）<input name="alipay_root_cert_sn" value="{e(alipay_root_cert_sn)}"></label>
-      <label>异步通知 URL（留空使用默认）<input name="notify_url" value="{e(notify_url)}" placeholder="{e(default_notify_url())}"></label><label>同步返回 URL<input name="return_url" value="{e(return_url)}"></label>
+      <label>应用公钥证书 SN（证书模式可填）<input name="app_cert_sn" value="{e(app_cert_sn)}"></label>
+      <label>支付宝根证书 SN（证书模式可填）<input name="alipay_root_cert_sn" value="{e(alipay_root_cert_sn)}"></label>
+      <label>异步通知 URL（留空使用默认）<input name="notify_url" value="{e(notify_url)}" placeholder="{e(default_notify_url())}"></label>
+      <div class="business-field business-precreate">
+        <label>当面付 product_code（通常留空；如支付宝侧要求可填 FACE_TO_FACE_PAYMENT）<input name="precreate_product_code" value="{e(precreate_product_code)}"></label>
+      </div>
+      <div class="business-field business-wap business-page">
+        <label>同步返回 URL<input name="return_url" value="{e(return_url)}" placeholder="{e(panel_base_url())}"></label>
+      </div>
+      <div class="business-field business-wap">
+        <label>手机网站支付 product_code<input name="wap_product_code" value="{e(wap_product_code)}" placeholder="QUICK_WAP_WAY"></label>
+      </div>
+      <div class="business-field business-page">
+        <label>电脑网站支付 product_code<input name="page_product_code" value="{e(page_product_code)}" placeholder="FAST_INSTANT_TRADE_PAY"></label>
+      </div>
       <button class="primary">{button}</button></form>
+    <script>
+    (function() {{
+      var form = document.currentScript.previousElementSibling;
+      if (!form || !form.classList.contains('account-form')) return;
+      function refresh() {{
+        var checked = form.querySelector('input[name="pay_types"]:checked');
+        var current = checked ? checked.value : 'precreate';
+        form.querySelectorAll('.business-field,.business-hint').forEach(function(el) {{
+          el.hidden = !el.classList.contains('business-' + current);
+        }});
+      }}
+      form.querySelectorAll('input[name="pay_types"]').forEach(function(input) {{ input.addEventListener('change', refresh); }});
+      refresh();
+    }})();
+    </script>
     """
 
 
 def account_values(data: dict[str, Any]) -> dict[str, str]:
-    pay_types = normalize_pay_types(data.get("pay_types", []))
+    pay_type = primary_pay_type(data.get("pay_types", "precreate"))
     return {
         "name": data.get("name", "").strip(),
         "app_id": data.get("app_id", "").strip(),
         "gateway": data.get("gateway", "https://openapi.alipay.com/gateway.do").strip() or "https://openapi.alipay.com/gateway.do",
-        "pay_types": ",".join(pay_types),
-        "precreate_product_code": data.get("precreate_product_code", "").strip(),
-        "page_product_code": data.get("page_product_code", "").strip() or DEFAULT_PRODUCT_CODES["page"],
-        "wap_product_code": data.get("wap_product_code", "").strip() or DEFAULT_PRODUCT_CODES["wap"],
+        "pay_types": pay_type,
+        "precreate_product_code": data.get("precreate_product_code", "").strip() if pay_type == "precreate" else "",
+        "page_product_code": (data.get("page_product_code", "").strip() or DEFAULT_PRODUCT_CODES["page"]) if pay_type == "page" else DEFAULT_PRODUCT_CODES["page"],
+        "wap_product_code": (data.get("wap_product_code", "").strip() or DEFAULT_PRODUCT_CODES["wap"]) if pay_type == "wap" else DEFAULT_PRODUCT_CODES["wap"],
         "app_cert_sn": data.get("app_cert_sn", "").strip(),
         "alipay_root_cert_sn": data.get("alipay_root_cert_sn", "").strip(),
         "notify_url": data.get("notify_url", "").strip(),
-        "return_url": data.get("return_url", "").strip(),
+        "return_url": data.get("return_url", "").strip() if pay_type in {"wap", "page"} else "",
     }
-
 
 def bounded_int(value: Any, default: int, minimum: int, maximum: int = 525_600) -> int:
     try:
@@ -253,15 +292,15 @@ def session_cookie(name: str, value: str, max_age: int | None = None) -> str:
 def page(title: str, body: str, logged_in: bool = True) -> bytes:
     nav = ""
     if logged_in:
-        nav = """
-        <header class="topbar"><a class="brand" href="/">PayPanel Alipay</a><nav>
+        nav = f"""
+        <header class="topbar"><a class="brand" href="/">{e(site_name())}</a><nav>
           <a href="/orders/new">发起收款</a><a href="/orders">订单</a><a href="/accounts">账户</a><a href="/settings">设置</a>
           <form action="/logout" method="post"><button>退出</button></form>
         </nav></header>
         """
     main_class = "container" if logged_in else "login-page"
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1"><title>{e(title)}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"><title>{e(title)} - {e(site_name())}</title>
     <link rel="stylesheet" href="/static/style.css"></head><body>{nav}<main class="{main_class}">{body}</main></body></html>""".encode()
 
 
@@ -579,7 +618,7 @@ class Handler(BaseHTTPRequestHandler):
         otp = '<label>2FA 验证码<input name="otp" inputmode="numeric" autocomplete="one-time-code" required></label>' if settings.get("enable_2fa") == "1" else ""
         err = f'<p class="error">{e(error)}</p>' if error else ""
         body = f"""
-        <form class="card login-card" method="post" action="/login"><h1>登录 PayPanel</h1>{err}
+        <form class="card login-card" method="post" action="/login"><h1>登录 {e(site_name())}</h1>{err}
           <label>用户名<input name="username" autocomplete="username" required></label>
           <label>密码<input type="password" name="password" autocomplete="current-password" required></label>{otp}
           <button class="primary">登录</button></form>
@@ -860,10 +899,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def settings_page(self) -> None:
         panel = settings_map()
-        uri = provisioning_uri(panel["totp_secret"], get_settings().admin_username) if panel.get("totp_secret") else ""
+        uri = provisioning_uri(panel["totp_secret"], get_settings().admin_username, site_name()) if panel.get("totp_secret") else ""
         totp = f'<img class="totp" src="{e(qr_img_src(uri))}" alt="TOTP 二维码"><p>用 Authenticator 扫码后，再开启 2FA。</p>' if uri else "<p>尚未生成 2FA 密钥。</p>"
         body = f"""
         <h1>设置</h1><form class="card form" method="post" action="/settings">
+          <label>站点名称<input name="site_name" value="{e(panel.get('site_name', site_name()))}" placeholder="PayPanel Alipay"></label>
           <label>绑定访问域名（如 pay.example.com）<input name="panel_domain" value="{e(panel.get('panel_domain', ''))}" placeholder="pay.example.com"></label>
           <label class="checkbox"><input type="checkbox" name="enforce_panel_domain" value="1" {'checked' if panel.get('enforce_panel_domain') == '1' else ''}> 仅允许绑定域名访问面板</label>
           <label>自定义回调域名/地址（留空使用 APP_BASE_URL）<input name="callback_base_url" value="{e(panel.get('callback_base_url', ''))}" placeholder="https://notify.example.com"></label>
@@ -884,6 +924,7 @@ class Handler(BaseHTTPRequestHandler):
     def save_settings(self) -> None:
         data = self.form()
         values = {
+            "site_name": data.get("site_name", "").strip() or "PayPanel Alipay",
             "panel_domain": host_name(data.get("panel_domain", "")),
             "enforce_panel_domain": "1" if data.get("enforce_panel_domain") == "1" else "0",
             "callback_base_url": normalize_base_url(data.get("callback_base_url", "")),

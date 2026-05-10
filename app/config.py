@@ -23,6 +23,7 @@ class Settings:
         self.secret_key = getenv("APP_SECRET_KEY", "dev-secret-change-me")
         self.admin_username = getenv("APP_ADMIN_USERNAME", "admin")
         self.admin_password = getenv("APP_ADMIN_PASSWORD", "admin")
+        self.site_name = getenv("APP_SITE_NAME", "PayPanel Alipay")
         self.database_path = getenv("APP_DATABASE_PATH", "data/paypanel.db")
         self.base_url = getenv("APP_BASE_URL", "http://localhost:8000").rstrip("/")
         self.session_max_age = int(getenv("APP_SESSION_MAX_AGE", "28800"))

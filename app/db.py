@@ -68,6 +68,7 @@ DEFAULT_SETTINGS = {
     "order_timeout_minutes": "30",
     "enable_2fa": "0",
     "totp_secret": "",
+    "site_name": "PayPanel Alipay",
     "panel_domain": "",
     "enforce_panel_domain": "0",
     "callback_base_url": "",
@@ -94,6 +95,7 @@ def connect() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     runtime_settings = get_settings()
     env_defaults = {
+        "site_name": runtime_settings.site_name,
         "panel_domain": runtime_settings.panel_domain,
         "enforce_panel_domain": runtime_settings.enforce_panel_domain,
         "callback_base_url": runtime_settings.callback_base_url,
